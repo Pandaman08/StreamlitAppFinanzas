@@ -1,0 +1,42 @@
+# Entorno virtual
+venv/
+ENV/
+
+# Archivos de Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Logs y archivos temporales
+*.log
+*.tmp
+*.swp
+*.swo
+
+# Editor configuration
+.vscode/
+.idea/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Sistema
+.DS_Store
+Thumbs.db
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Variables de entorno
+.env
+.env.local
+.env.*.local
+
+# Distribución
+dist/
+build/
+*.egg-info/
+
+# Pip
+pip-log.txt
+pip-debug.log
