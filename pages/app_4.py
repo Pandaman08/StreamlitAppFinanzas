@@ -288,76 +288,195 @@ else:
 
 # ------------------- CÁLCULO DE RATIOS FINANCIEROS -------------------
 ratios_data = {}
-# Años comunes entre balance y resultados
 anios_comunes = sorted(list(set(df_balance.columns) & set(df_resultados.columns))) if (not df_balance.empty and not df_resultados.empty) else []
 
-# Función auxiliar para obtener valor del balance con nombre flexible (no usada para inventarios)
-def get_balance_val(name, year):
-    key = normalize_name(name)
-    # buscar con y sin sección
-    if key in df_balance.index and year in df_balance.columns:
-        return df_balance.loc[key, year]
-    # intentar encontrar key dentro de índices que contengan el nombre
-    for idx in df_balance.index:
-        if key in idx and year in df_balance.columns:
-            return df_balance.loc[idx, year]
-    return 0.0
+def buscar_cuenta_flexible(df, keywords, fallback_keywords=None):
+    """
+    Busca una cuenta que contenga AL MENOS UNA de las palabras clave (case-insensitive).
+    Si no encuentra nada, intenta con las palabras clave de fallback.
+    """
+    # Primera pasada: buscar con las palabras clave principales
+    for idx in df.index:
+        idx_lower = idx.lower()
+        if any(kw.lower() in idx_lower for kw in keywords):
+            return idx
 
-# Función auxiliar para obtener valor del resultado
-def get_result_val(name, year):
-    key = normalize_name(name)
-    if key in df_resultados.index and year in df_resultados.columns:
-        return df_resultados.loc[key, year]
-    return 0.0
+    # Segunda pasada: si no encontró con las principales, intenta con las de fallback
+    if fallback_keywords:
+        for idx in df.index:
+            idx_lower = idx.lower()
+            if any(kw.lower() in idx_lower for kw in fallback_keywords):
+                return idx
+
+    # Tercera pasada: si aún no, busca por coincidencia parcial más amplia
+    for idx in df.index:
+        idx_lower = idx.lower()
+        # Verificar si alguna palabra clave principal está contenida en el índice
+        for kw in keywords:
+            if kw.lower() in idx_lower:
+                return idx
+
+    # Cuarta pasada: si todo falla, devuelve None
+    return None
 
 if anios_comunes:
     for i, anio in enumerate(anios_comunes):
         ratios_data[anio] = {}
 
-        # Balance
-        activo_corriente = get_balance_val("Total Activos Corrientes", anio)
-        # Usar la función robusta para inventarios (prioriza EXISTENCIAS/EXISTENCIA y activos)
-        inventarios = inventario_activos_valor(anio)
-        pasivo_corriente = get_balance_val("Total Pasivos Corrientes", anio)
-        cxc = get_balance_val("Cuentas por Cobrar Comerciales y Otras Cuentas por Cobrar", anio)
-        activos_totales = get_balance_val("TOTAL DE ACTIVOS", anio)
-        pasivo_total = get_balance_val("Total Pasivos", anio)
-        patrimonio = get_balance_val("Total Patrimonio", anio)
+        # --- Balance General ---
+        # Activo Corriente
+        act_corr_keywords = ["TOTAL", "ACTIVO", "CORRIENTE"]
+        act_corr = buscar_cuenta_flexible(df_balance, act_corr_keywords)
+        activo_corriente = df_balance.loc[act_corr, anio] if act_corr else 0.0
 
-        # Resultados
-        ventas = get_result_val("Ingresos de Actividades Ordinarias", anio)
-        costo_ventas = get_result_val("Costo de Ventas", anio)
-        utilidad_neta = get_result_val("Ganancia (Perdida) Neta del Ejercicio", anio)
+        # Inventarios / Existencias
+        inv_keywords = ["INVENTARIOS", "EXISTENCIAS"]
+        inv_fallback = ["INVENTARIO", "EXISTENCIA"]  # Fallback
+        inventarios = 0.0
+        inv_row = buscar_cuenta_flexible(df_balance, inv_keywords, inv_fallback)
+        if inv_row:
+            inventarios = df_balance.loc[inv_row, anio]
 
-        # Promedios con año anterior
-        cxc_prom = cxc
+        # Pasivo Corriente
+        pas_corr_keywords = ["TOTAL", "PASIVO", "CORRIENTE"]
+        pas_corr = buscar_cuenta_flexible(df_balance, pas_corr_keywords)
+        pasivo_corriente = df_balance.loc[pas_corr, anio] if pas_corr else 0.0
+
+        # Cuentas por Cobrar
+        cxc_keywords = ["CUENTAS", "COBRAR", "COMERCIALES"]
+        cxc_rows = [idx for idx in df_balance.index if any(kw.lower() in idx.lower() for kw in cxc_keywords)]
+        cxc_val = sum(df_balance.loc[r, anio] for r in cxc_rows) if cxc_rows else 0.0
+
+        # Activos Totales
+        act_tot_keywords = ["TOTAL", "ACTIVO"]
+        act_tot = buscar_cuenta_flexible(df_balance, act_tot_keywords)
+        activos_totales = df_balance.loc[act_tot, anio] if act_tot else 0.0
+
+        # Pasivo Total
+        pas_tot_keywords = ["TOTAL", "PASIVO"]
+        pas_tot = buscar_cuenta_flexible(df_balance, pas_tot_keywords)
+        pasivo_total = df_balance.loc[pas_tot, anio] if pas_tot else 0.0
+
+        # Patrimonio Neto
+        patr_keywords = ["TOTAL", "PATRIMONIO", "NETO"]
+        patr_fallback = ["CAPITAL", "EMITIDO"]  # Fallback si no encuentra PATRIMONIO NETO
+        patr = buscar_cuenta_flexible(df_balance, patr_keywords, patr_fallback)
+        patrimonio = df_balance.loc[patr, anio] if patr else 0.0
+
+        # --- Estado de Resultados ---
+        # Ventas
+        ventas_keywords = ["VENTAS", "INGRESOS", "ORDINARIAS", "BRUTOS"]
+        ventas_fallback = ["INGRESOS", "OPERACIONALES"]  # Fallback
+        ventas = 0.0
+        ventas_row = buscar_cuenta_flexible(df_resultados, ventas_keywords, ventas_fallback)
+        if ventas_row:
+            ventas = df_resultados.loc[ventas_row, anio]
+
+        # Costo de Ventas
+        costo_ventas_keywords = ["COSTO", "VENTAS", "OPERACIONALES"]
+        costo_ventas_fallback = ["COSTO", "VENTAS"]  # Fallback
+        costo_ventas = 0.0
+        costo_ventas_row = buscar_cuenta_flexible(df_resultados, costo_ventas_keywords, costo_ventas_fallback)
+        if costo_ventas_row:
+            costo_ventas = df_resultados.loc[costo_ventas_row, anio]
+
+        # Utilidad Neta
+        utilidad_neta_keywords = ["UTILIDAD", "PERDIDA", "NETA", "EJERCICIO"]
+        utilidad_neta_fallback = ["GANANCIA", "PERDIDA", "NETA"]  # Fallback
+        utilidad_neta = 0.0
+        utilidad_neta_row = buscar_cuenta_flexible(df_resultados, utilidad_neta_keywords, utilidad_neta_fallback)
+        if utilidad_neta_row:
+            utilidad_neta = df_resultados.loc[utilidad_neta_row, anio]
+
+        # --- Promedios con año anterior ---
+        def promedio(actual, anterior):
+            return (actual + anterior) / 2 if (actual + anterior) != 0 else actual
+
+        cxc_prom = cxc_val
         inv_prom = inventarios
-        activos_prom = activos_totales
-        patrimonio_prom = patrimonio
+        act_prom = activos_totales
+        patr_prom = patrimonio
 
         if i > 0:
             anio_ant = anios_comunes[i-1]
-            cxc_ant = get_balance_val("Cuentas por Cobrar Comerciales y Otras Cuentas por Cobrar", anio_ant)
-            inv_ant = inventario_activos_valor(anio_ant)
-            activos_ant = get_balance_val("TOTAL DE ACTIVOS", anio_ant)
-            patrimonio_ant = get_balance_val("Total Patrimonio", anio_ant)
+            
+            # CxC anterior
+            cxc_ant = sum(df_balance.loc[r, anio_ant] for r in cxc_rows) if cxc_rows else 0.0
+            
+            # Inventarios anterior
+            inv_ant = 0.0
+            if inv_row:
+                inv_ant = df_balance.loc[inv_row, anio_ant]
+            
+            # Activos y Patrimonio anteriores
+            act_ant = df_balance.loc[act_tot, anio_ant] if act_tot else 0.0
+            patr_ant = df_balance.loc[patr, anio_ant] if patr else 0.0
 
-            cxc_prom = (cxc + cxc_ant) / 2 if (cxc + cxc_ant) != 0 else cxc
-            inv_prom = (inventarios + inv_ant) / 2 if (inventarios + inv_ant) != 0 else inventarios
-            activos_prom = (activos_totales + activos_ant) / 2 if (activos_totales + activos_ant) != 0 else activos_totales
-            patrimonio_prom = (patrimonio + patrimonio_ant) / 2 if (patrimonio + patrimonio_ant) != 0 else patrimonio
+            cxc_prom = promedio(cxc_val, cxc_ant)
+            inv_prom = promedio(inventarios, inv_ant)
+            act_prom = promedio(activos_totales, act_ant)
+            patr_prom = promedio(patrimonio, patr_ant)
 
-        # Ratios solicitados
-        ratios_data[anio]["Liquidez Corriente"] = activo_corriente / pasivo_corriente if pasivo_corriente != 0 else None
-        ratios_data[anio]["Prueba Ácida"] = (activo_corriente - inventarios) / pasivo_corriente if pasivo_corriente != 0 else None
-        ratios_data[anio]["Rotación CxC"] = ventas / cxc_prom if cxc_prom != 0 else None
-        ratios_data[anio]["Rotación Inventarios"] = abs(costo_ventas) / inv_prom if inv_prom != 0 else None
-        ratios_data[anio]["Rotación Activos Totales"] = ventas / activos_prom if activos_prom != 0 else None
-        ratios_data[anio]["Razón Deuda Total"] = pasivo_total / activos_totales if activos_totales != 0 else None
-        ratios_data[anio]["Razón Deuda/Patrimonio"] = pasivo_total / patrimonio if patrimonio != 0 else None
-        ratios_data[anio]["Margen Neto"] = utilidad_neta / ventas if ventas != 0 else None
-        ratios_data[anio]["ROA"] = utilidad_neta / activos_prom if activos_prom != 0 else None
-        ratios_data[anio]["ROE"] = utilidad_neta / patrimonio_prom if patrimonio_prom != 0 else None
+        # --- Cálculo de ratios ---
+        # 1. Liquidez Corriente
+        if pasivo_corriente != 0:
+            ratios_data[anio]["Liquidez Corriente"] = activo_corriente / pasivo_corriente
+        else:
+            ratios_data[anio]["Liquidez Corriente"] = None
+
+        # 2. Prueba Ácida
+        if pasivo_corriente != 0:
+            ratios_data[anio]["Prueba Ácida"] = (activo_corriente - inventarios) / pasivo_corriente
+        else:
+            ratios_data[anio]["Prueba Ácida"] = None
+
+        # 3. Rotación CxC
+        if cxc_prom != 0:
+            ratios_data[anio]["Rotación CxC"] = ventas / cxc_prom
+        else:
+            ratios_data[anio]["Rotación CxC"] = None
+
+        # 4. Rotación Inventarios
+        if inv_prom != 0:
+            ratios_data[anio]["Rotación Inventarios"] = abs(costo_ventas) / inv_prom
+        else:
+            ratios_data[anio]["Rotación Inventarios"] = None
+
+        # 5. Rotación Activos Totales
+        if act_prom != 0:
+            ratios_data[anio]["Rotación Activos Totales"] = ventas / act_prom
+        else:
+            ratios_data[anio]["Rotación Activos Totales"] = None
+
+        # 6. Razón Deuda Total
+        if activos_totales != 0:
+            ratios_data[anio]["Razón Deuda Total"] = pasivo_total / activos_totales
+        else:
+            ratios_data[anio]["Razón Deuda Total"] = None
+
+        # 7. Razón Deuda/Patrimonio
+        if patrimonio != 0:
+            ratios_data[anio]["Razón Deuda/Patrimonio"] = pasivo_total / patrimonio
+        else:
+            ratios_data[anio]["Razón Deuda/Patrimonio"] = None
+
+        # 8. Margen Neto
+        if ventas != 0:
+            ratios_data[anio]["Margen Neto"] = utilidad_neta / ventas
+        else:
+            ratios_data[anio]["Margen Neto"] = None
+
+        # 9. ROA
+        if act_prom != 0:
+            ratios_data[anio]["ROA"] = utilidad_neta / act_prom
+        else:
+            ratios_data[anio]["ROA"] = None
+
+        # 10. ROE
+        if patr_prom != 0:
+            ratios_data[anio]["ROE"] = utilidad_neta / patr_prom
+        else:
+            ratios_data[anio]["ROE"] = None
 
     df_ratios = pd.DataFrame.from_dict(ratios_data, orient='index').round(4).T
 else:
