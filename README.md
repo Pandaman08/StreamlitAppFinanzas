@@ -19,5 +19,8 @@ streamlit run appInicio.py
 Librería adicionales:
 -------------------------
 pip install openpyxl xlrd
+
 pip install openpyxl xlrd pandas
+
 pip install pandas openpyxl lxml beautifulsoup4
+
