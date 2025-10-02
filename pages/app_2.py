@@ -294,7 +294,8 @@ anios_comunes = sorted(list(set(df_balance.columns) & set(df_resultados.columns)
 def buscar_cuenta_exacta(df, keywords):
     """Busca una cuenta que contenga todas las palabras clave (case-insensitive)."""
     for idx in df.index:
-        if all(kw.lower() in idx.lower() for kw in keywords):
+        idx_sin_seccion = idx.split('||')[-1] if '||' in idx else idx
+        if all(kw.lower() in idx_sin_seccion.lower() for kw in keywords):
             return idx
     return None
 
