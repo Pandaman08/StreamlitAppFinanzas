@@ -14,15 +14,12 @@ from openpyxl.formatting.rule import ColorScaleRule
 
 st.set_page_config(page_title="Consolidador SMV - Finanzas Corporativas", layout="wide")
 
-# ================= HEADER =================
 st.title("📊 Consolidador de Estados Financieros - SMV")
 st.markdown("**Análisis Financiero Automatizado** | Sube archivos Excel del SMV y obtén análisis completo con gráficas.")
 
-# ================= SIDEBAR =================
 with st.sidebar:
     st.header("⚙️ Configuración")
     nombre_empresa = st.text_input("Nombre de la Empresa", value="EMPRESA ANALIZADA", help="Aparecerá en el reporte")
-    
     st.markdown("---")
     st.markdown("### 📋 Instrucciones")
     st.info("""
@@ -32,18 +29,12 @@ with st.sidebar:
     4. Revisa resultados y descarga el consolidado
     """)
 
-# ================= UPLOAD FILES =================
-archivos = st.file_uploader(
-    "📁 Selecciona archivos Excel (.xls) del SMV",
-    type=["xls"],
-    accept_multiple_files=True
-)
+archivos = st.file_uploader("📁 Selecciona archivos Excel (.xls) del SMV", type=["xls"], accept_multiple_files=True)
 
 if not archivos:
     st.warning("👆 **Por favor, sube los archivos Excel del SMV para comenzar el análisis.**")
     st.stop()
 
-# ================= UTILIDADES =================
 def normalize_name(s):
     if not isinstance(s, str):
         return s
@@ -80,10 +71,12 @@ def buscar_cuenta_parcial(df, keywords):
             return idx
     return None
 
-# ================= PROCESAR ARCHIVOS =================
 datos_balance = {}
 datos_resultados = {}
 datos_flujo_efectivo = {}
+colores_balance = {}
+colores_resultados = {}
+colores_flujo = {}
 
 progress_bar = st.progress(0)
 status_text = st.empty()
@@ -106,9 +99,18 @@ for i, archivo in enumerate(archivos):
     
     soup = BeautifulSoup(contenido, 'html.parser')
     
-    # Balance
     tabla_balance = soup.find('table', {'id': 'gvReporte'})
     if tabla_balance:
+        for tr in tabla_balance.find_all('tr'):
+            celdas_td = tr.find_all('td')
+            if len(celdas_td) >= 3:
+                cuenta_td = celdas_td[0]
+                cuenta_text = normalize_name(cuenta_td.get_text(strip=True))
+                style = cuenta_td.get('style', '') or ''
+                bgcolor = cuenta_td.get('bgcolor', '') or ''
+                if 'background' in style.lower() or bgcolor:
+                    colores_balance[cuenta_text] = True
+        
         filas = [[td.get_text(strip=True) for td in tr.find_all(['td', 'th'])] for tr in tabla_balance.find_all('tr') if tr.find_all(['td', 'th'])]
         if len(filas) > 1:
             encabezados = filas[0]
@@ -137,9 +139,18 @@ for i, archivo in enumerate(archivos):
                     elif datos_balance[anio][cuenta] == 0 and valor != 0:
                         datos_balance[anio][cuenta] = valor
     
-    # Estado de Resultados
     tabla_resultados = soup.find('table', {'id': 'gvReporte1'})
     if tabla_resultados:
+        for tr in tabla_resultados.find_all('tr'):
+            celdas_td = tr.find_all('td')
+            if len(celdas_td) >= 3:
+                cuenta_td = celdas_td[0]
+                cuenta_text = normalize_name(cuenta_td.get_text(strip=True))
+                style = cuenta_td.get('style', '') or ''
+                bgcolor = cuenta_td.get('bgcolor', '') or ''
+                if 'background' in style.lower() or bgcolor:
+                    colores_resultados[cuenta_text] = True
+        
         filas = [[td.get_text(strip=True) for td in tr.find_all(['td', 'th'])] for tr in tabla_resultados.find_all('tr') if tr.find_all(['td', 'th'])]
         if len(filas) > 1:
             encabezados = filas[0]
@@ -162,9 +173,18 @@ for i, archivo in enumerate(archivos):
                         datos_resultados[anio] = {}
                     datos_resultados[anio][cuenta] = valor
     
-    # Flujo de Efectivo
     tabla_flujo = soup.find('table', {'id': 'gvReporte3'})
     if tabla_flujo:
+        for tr in tabla_flujo.find_all('tr'):
+            celdas_td = tr.find_all('td')
+            if len(celdas_td) >= 3:
+                cuenta_td = celdas_td[0]
+                cuenta_text = normalize_name(cuenta_td.get_text(strip=True))
+                style = cuenta_td.get('style', '') or ''
+                bgcolor = cuenta_td.get('bgcolor', '') or ''
+                if 'background' in style.lower() or bgcolor:
+                    colores_flujo[cuenta_text] = True
+        
         filas = [[td.get_text(strip=True) for td in tr.find_all(['td', 'th'])] for tr in tabla_flujo.find_all('tr') if tr.find_all(['td', 'th'])]
         if len(filas) > 1:
             encabezados = filas[0]
@@ -193,7 +213,6 @@ for i, archivo in enumerate(archivos):
 status_text.empty()
 progress_bar.empty()
 
-# ================= CREAR DATAFRAMES =================
 df_balance = pd.DataFrame.from_dict(datos_balance, orient='index').fillna(0.0).T if datos_balance else pd.DataFrame()
 df_resultados = pd.DataFrame.from_dict(datos_resultados, orient='index').fillna(0.0).T if datos_resultados else pd.DataFrame()
 df_flujo_efectivo = pd.DataFrame.from_dict(datos_flujo_efectivo, orient='index').fillna(0.0).T if datos_flujo_efectivo else pd.DataFrame()
@@ -205,7 +224,6 @@ if not df_resultados.empty:
 if not df_flujo_efectivo.empty:
     df_flujo_efectivo = df_flujo_efectivo.reindex(sorted(df_flujo_efectivo.columns), axis=1)
 
-# ================= ANÁLISIS V/H =================
 df_vertical_balance = pd.DataFrame()
 df_horizontal_balance = pd.DataFrame()
 
@@ -262,7 +280,6 @@ if not df_resultados.empty:
     df_horizontal_resultados = df_horizontal_resultados[nuevas_columnas].round(1)
     df_horizontal_resultados = df_horizontal_resultados.replace([np.inf, -np.inf], np.nan)
 
-# ================= CÁLCULO DE RATIOS CORREGIDO =================
 ratios_data = {}
 anios_comunes = sorted(list(set(df_balance.columns) & set(df_resultados.columns))) if (not df_balance.empty and not df_resultados.empty) else []
 
@@ -270,7 +287,6 @@ if anios_comunes:
     for i, anio in enumerate(anios_comunes):
         ratios_data[anio] = {}
         
-        # BALANCE
         act_corr = buscar_cuenta_flexible(df_balance, [["TOTAL", "ACTIVO", "CORRIENTE"], ["TOTAL", "ACTIVOS", "CORRIENTES"]])
         activo_corriente = df_balance.loc[act_corr, anio] if act_corr else 0.0
         
@@ -310,7 +326,6 @@ if anios_comunes:
         if patrimonio == 0.0 and activos_totales != 0.0:
             patrimonio = activos_totales - pasivo_total
         
-        # ESTADO DE RESULTADOS
         ventas = buscar_cuenta_flexible(df_resultados, [["INGRESOS", "ACTIVIDADES", "ORDINARIAS"], ["VENTAS", "NETAS"]])
         if not ventas:
             ventas = buscar_cuenta_parcial(df_resultados, ["VENTAS", "NETAS"])
@@ -330,7 +345,6 @@ if anios_comunes:
             util = buscar_cuenta_parcial(df_resultados, ["GANANCIA", "NETA"])
         utilidad_neta = df_resultados.loc[util, anio] if util else 0.0
         
-        # PROMEDIOS
         cxc_prom = cxc_val
         inv_prom = inventarios
         act_prom = activos_totales
@@ -355,31 +369,29 @@ if anios_comunes:
             act_prom = (activos_totales + act_ant) / 2 if (activos_totales + act_ant) != 0 else activos_totales
             patr_prom = (patrimonio + patr_ant) / 2 if (patrimonio + patr_ant) != 0 else patrimonio
         
-        # RATIOS CORREGIDOS
         ratios_data[anio]["Liquidez Corriente"] = round(activo_corriente / pasivo_corriente, 4) if pasivo_corriente != 0 else None
         ratios_data[anio]["Prueba Ácida"] = round((activo_corriente - inventarios) / pasivo_corriente, 4) if pasivo_corriente != 0 else None
         ratios_data[anio]["Rotación CxC"] = round(ventas_val / cxc_prom, 4) if cxc_prom != 0 else None
-        # CORREGIDO: Sin abs() para mantener negativo
         ratios_data[anio]["Rotación Inventarios"] = round(costo_ventas / inv_prom, 4) if inv_prom != 0 else None
         ratios_data[anio]["Rotación Activos Totales"] = round(ventas_val / act_prom, 4) if act_prom != 0 else None
         ratios_data[anio]["Razón Deuda Total"] = round(pasivo_total / activos_totales, 4) if activos_totales != 0 else None
         ratios_data[anio]["Razón Deuda/Patrimonio"] = round(pasivo_total / patrimonio, 4) if patrimonio != 0 else None
         ratios_data[anio]["Margen Neto"] = round(utilidad_neta / ventas_val, 4) if ventas_val != 0 else None
-        # CORREGIDO: ROA y ROE en porcentaje (multiplicar por 100)
         ratios_data[anio]["ROA"] = round((utilidad_neta / act_prom) * 100, 4) if act_prom != 0 else None
         ratios_data[anio]["ROE"] = round((utilidad_neta / patr_prom) * 100, 4) if patr_prom != 0 else None
 
 df_ratios = pd.DataFrame.from_dict(ratios_data, orient='index').T if ratios_data else pd.DataFrame()
+
 if not df_ratios.empty:
-    # Crear versión formateada para mostrar
     df_ratios_display = df_ratios.copy()
     for col in df_ratios_display.columns:
-        df_ratios_display.loc['ROA', col] = f"{df_ratios.loc['ROA', col]:.2f}%" if pd.notna(df_ratios.loc['ROA', col]) else ""
-        df_ratios_display.loc['ROE', col] = f"{df_ratios.loc['ROE', col]:.2f}%" if pd.notna(df_ratios.loc['ROE', col]) else ""
+        if 'ROA' in df_ratios_display.index:
+            df_ratios_display.loc['ROA', col] = f"{df_ratios.loc['ROA', col]:.2f}%" if pd.notna(df_ratios.loc['ROA', col]) else ""
+        if 'ROE' in df_ratios_display.index:
+            df_ratios_display.loc['ROE', col] = f"{df_ratios.loc['ROE', col]:.2f}%" if pd.notna(df_ratios.loc['ROE', col]) else ""
 else:
     df_ratios_display = pd.DataFrame()
-    
-# ================= INTERPRETACIONES DE RATIOS =================
+
 INTERPRETACIONES = {
     "Liquidez Corriente": "Mide la capacidad de pagar deudas a corto plazo. Valores > 1 indican buena liquidez. Valores > 2 pueden indicar recursos ociosos.",
     "Prueba Ácida": "Mide liquidez sin inventarios. Valores > 1 indican capacidad de pago inmediata sin vender inventario.",
@@ -393,7 +405,6 @@ INTERPRETACIONES = {
     "ROE": "Rentabilidad sobre patrimonio (en %). Valores > 15% considerados excelentes. Mide retorno para accionistas."
 }
 
-# ================= SIDEBAR STATUS =================
 with st.sidebar:
     st.markdown("---")
     st.success(f"✅ **{len(archivos)}** archivos procesados")
@@ -401,7 +412,6 @@ with st.sidebar:
         st.info(f"📅 **Años:** {', '.join(map(str, anios_comunes))}")
     st.metric("Ratios Calculados", len(df_ratios) if not df_ratios.empty else 0)
 
-# ================= TABS =================
 tab1, tab2, tab3, tab4 = st.tabs(["📊 Estados Financieros", "📈 Análisis V/H", "🧮 Ratios y Gráficas", "📥 Descargar"])
 
 with tab1:
@@ -524,16 +534,16 @@ with tab4:
         
         if not df_vertical_balance.empty and not df_horizontal_balance.empty:
             df_vertical_balance.to_excel(writer, sheet_name='Analisis Balance', index_label='Cuenta', startrow=0)
-            ws = writer.sheets['Analisis Balance']
+            ws_ab = writer.sheets['Analisis Balance']
             startrow = len(df_vertical_balance) + 3
-            ws.cell(row=startrow, column=1, value="ANÁLISIS HORIZONTAL")
+            ws_ab.cell(row=startrow, column=1, value="ANÁLISIS HORIZONTAL")
             df_horizontal_balance.to_excel(writer, sheet_name='Analisis Balance', index_label='Cuenta', startrow=startrow+1, header=True)
         
         if not df_vertical_resultados.empty and not df_horizontal_resultados.empty:
             df_vertical_resultados.to_excel(writer, sheet_name='Analisis Resultados', index_label='Cuenta', startrow=0)
-            ws = writer.sheets['Analisis Resultados']
+            ws_ar = writer.sheets['Analisis Resultados']
             startrow = len(df_vertical_resultados) + 3
-            ws.cell(row=startrow, column=1, value="ANÁLISIS HORIZONTAL")
+            ws_ar.cell(row=startrow, column=1, value="ANÁLISIS HORIZONTAL")
             df_horizontal_resultados.to_excel(writer, sheet_name='Analisis Resultados', index_label='Cuenta', startrow=startrow+1, header=True)
         
         if not df_ratios.empty:
@@ -547,6 +557,9 @@ with tab4:
     total_fill = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
     total_font = Font(name='Calibri', size=10, bold=True)
     cell_font = Font(name='Calibri', size=10)
+    gray_fill = PatternFill(start_color="E7E6E6", end_color="E7E6E6", fill_type="solid")
+    subtitle_fill = PatternFill(start_color="8EA9DB", end_color="8EA9DB", fill_type="solid")
+    subtitle_font = Font(name='Calibri', size=11, bold=True, color="FFFFFF")
     thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
     
     for sheet_name in wb.sheetnames:
@@ -561,10 +574,43 @@ with tab4:
             for cell in row:
                 cell.font = cell_font
                 cell.border = thin_border
+                
+                # Buscar y formatear subtítulo ANÁLISIS HORIZONTAL
+                if cell.column == 1 and isinstance(cell.value, str) and "ANÁLISIS HORIZONTAL" in cell.value:
+                    # Aplicar formato de subtítulo a toda la fila
+                    for col in range(1, ws.max_column + 1):
+                        ws.cell(row=cell.row, column=col).fill = subtitle_fill
+                        ws.cell(row=cell.row, column=col).font = subtitle_font
+                        ws.cell(row=cell.row, column=col).alignment = Alignment(horizontal='center', vertical='center')
+                        ws.cell(row=cell.row, column=col).border = thin_border
+                    # Merge todas las columnas para el subtítulo
+                    ws.merge_cells(start_row=cell.row, start_column=1, end_row=cell.row, end_column=ws.max_column)
+                    # La siguiente fila (headers de la tabla horizontal) también debe tener formato de header
+                    next_row = cell.row + 1
+                    for col in range(1, ws.max_column + 1):
+                        ws.cell(row=next_row, column=col).fill = header_fill
+                        ws.cell(row=next_row, column=col).font = header_font
+                        ws.cell(row=next_row, column=col).alignment = Alignment(horizontal='center', vertical='center')
+                        ws.cell(row=next_row, column=col).border = thin_border
+                    continue
+                
+                if cell.column == 1 and isinstance(cell.value, str):
+                    cuenta_norm = normalize_name(cell.value)
+                    if sheet_name == 'Balance' and cuenta_norm in colores_balance:
+                        for c in row:
+                            c.fill = gray_fill
+                    elif sheet_name == 'Estado Resultados' and cuenta_norm in colores_resultados:
+                        for c in row:
+                            c.fill = gray_fill
+                    elif sheet_name == 'Flujo Efectivo' and cuenta_norm in colores_flujo:
+                        for c in row:
+                            c.fill = gray_fill
+                
                 if isinstance(cell.value, str) and "TOTAL" in cell.value.upper():
                     for c in row:
                         c.fill = total_fill
                         c.font = total_font
+                
                 if isinstance(cell.value, (int, float)) and cell.column > 1:
                     if 'Analisis' in sheet_name:
                         cell.number_format = '0.0"%"'
@@ -584,7 +630,6 @@ with tab4:
                     pass
             ws.column_dimensions[column_letter].width = min(max_length + 2, 50)
     
-    # GRÁFICAS CORREGIDAS
     if not df_ratios.empty and 'Ratios' in wb.sheetnames:
         ws_ratios = wb['Ratios']
         
@@ -592,21 +637,19 @@ with tab4:
             del wb['Ratios y Graficas']
         ws_graficas = wb.create_sheet('Ratios y Graficas')
         
-        # Mapa de calor
         ws_graficas['A1'] = 'MAPA DE CALOR DE RATIOS'
         ws_graficas['A1'].font = Font(name='Calibri', size=14, bold=True, color="366092")
         ws_graficas.append([])
-        ws_graficas.append(['Ratio'] + df_ratios.columns.tolist())
+        ws_graficas.append(['Ratio'] + list(df_ratios.columns))
         
-        # Reemplazar None con 0 para gráficas
         df_ratios_clean = df_ratios.fillna(0)
         
         for ratio in df_ratios_clean.index:
-            row_data = [ratio] + df_ratios_clean.loc[ratio].tolist()
+            row_data = [ratio] + [float(x) for x in df_ratios_clean.loc[ratio].values]
             ws_graficas.append(row_data)
         
         num_years = len(df_ratios_clean.columns)
-        ratio_names = df_ratios_clean.index.tolist()
+        ratio_names = list(df_ratios_clean.index)
         
         color_scale = ColorScaleRule(start_type='min', start_color='F8696B', mid_type='percentile', mid_value=50, mid_color='FFEB84', end_type='max', end_color='63BE7B')
         ws_graficas.conditional_formatting.add(f'B3:{get_column_letter(num_years+1)}{len(ratio_names)+2}', color_scale)
@@ -627,21 +670,20 @@ with tab4:
         for col in range(2, num_years + 2):
             ws_graficas.column_dimensions[get_column_letter(col)].width = 12
         
-        # Gráficas con interpretaciones
         chart_start = len(ratio_names) + 5
         ws_graficas.cell(row=chart_start, column=1, value='GRÁFICAS CON INTERPRETACIONES')
         ws_graficas.cell(row=chart_start, column=1).font = Font(name='Calibri', size=14, bold=True, color="366092")
         
         current_row = chart_start + 2
+        
         for idx, ratio in enumerate(ratio_names):
-            # Interpretación
             ws_graficas.cell(row=current_row, column=1, value=f"{ratio}:")
             ws_graficas.cell(row=current_row, column=1).font = Font(name='Calibri', size=11, bold=True)
+            
             ws_graficas.cell(row=current_row + 1, column=1, value=INTERPRETACIONES.get(ratio, ""))
             ws_graficas.cell(row=current_row + 1, column=1).font = Font(name='Calibri', size=10, italic=True)
             ws_graficas.merge_cells(f'A{current_row+1}:H{current_row+1}')
             
-            # Gráfica
             chart = LineChart()
             chart.title = ratio
             chart.style = 10
@@ -650,14 +692,18 @@ with tab4:
             chart.height = 7
             chart.width = 14
             
-            ratio_row_in_ratios = ratio_names.index(ratio) + 2
-            data = Reference(ws_ratios, min_col=2, min_row=ratio_row_in_ratios, max_col=num_years+1, max_row=ratio_row_in_ratios)
+            # Usar el índice directo que SÍ es correcto
+            ratio_row_in_sheet = idx + 2  # idx=0 corresponde a fila 2 (fila 1 es header)
+            
+            # Crear referencias a los datos
+            data = Reference(ws_ratios, min_col=2, min_row=ratio_row_in_sheet, max_col=num_years+1, max_row=ratio_row_in_sheet)
             cats = Reference(ws_ratios, min_col=2, min_row=1, max_col=num_years+1, max_row=1)
             
             chart.add_data(data, titles_from_data=False)
             chart.set_categories(cats)
             
             ws_graficas.add_chart(chart, f'A{current_row + 3}')
+            
             current_row += 18
     
     output_formatted = io.BytesIO()
@@ -671,4 +717,4 @@ with tab4:
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
     
-    st.success("✅ Excel con gráficas e interpretaciones generado")
+    st.success("✅ Excel generado con gráficas, interpretaciones y formato completo")
