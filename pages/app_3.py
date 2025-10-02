@@ -15,7 +15,7 @@ st.set_page_config(page_title="Consolidador SMV - Finanzas Corporativas", layout
 
 # ================= HEADER =================
 st.title("📊 Consolidador de Estados Financieros - SMV")
-st.markdown("**Análisis Financiero Automatizado** | Sube archivos Excel del SMV (2002-2024) y obtén análisis completo con gráficas.")
+st.markdown("**Análisis Financiero Automatizado** | Sube archivos Excel del SMV y obtén análisis completo con gráficas.")
 
 # ================= SIDEBAR =================
 with st.sidebar:
