@@ -12,25 +12,40 @@ from openpyxl.utils import get_column_letter
 from openpyxl.chart import LineChart, Reference
 from openpyxl.formatting.rule import ColorScaleRule
 
-st.set_page_config(page_title="Consolidador SMV - Finanzas Corporativas", layout="wide")
-
+st.set_page_config(
+    page_title="Consolidador Financiero SMV",  
+    page_icon="📈",                            
+    layout="wide",                            
+    initial_sidebar_state="expanded"           
+)
 # ================= HEADER =================
 st.title("📊 Consolidador de Estados Financieros - SMV")
 st.markdown("**Análisis Financiero Automatizado** | Sube archivos Excel del SMV y obtén análisis completo con gráficas.")
 
 # ================= SIDEBAR =================
 with st.sidebar:
-    st.header("⚙️ Configuración")
-    nombre_empresa = st.text_input("Nombre de la Empresa", value="EMPRESA ANALIZADA", help="Aparecerá en el reporte")
+    st.header("⚙️ Configuración del Análisis")
+    
+    nombre_empresa = st.text_input(
+        "Nombre de la Empresa", 
+        value="EMPRESA ANALIZADA", 
+        help="Este nombre se mostrará en el reporte generado"
+    )
     
     st.markdown("---")
-    st.markdown("### 📋 Instrucciones")
-    st.info("""
-    1. Descarga archivos Excel (.xls) del SMV
-    2. Súbelos (pueden ser de cualquier año)
-    3. Espera el procesamiento
-    4. Revisa resultados y descarga el consolidado
-    """)
+    
+    st.subheader("📋 Cómo usar la herramienta")
+    st.info(
+        """
+        1️⃣ Descarga los archivos Excel (.xls) desde la SMV.  
+        2️⃣ Súbelos aquí (pueden ser de cualquier año).  
+        3️⃣ Espera mientras se procesan los datos.  
+        4️⃣ Visualiza los resultados y descarga tu consolidado.  
+        """
+    )
+    
+    st.markdown("---")
+    st.write("💡 Tip: Asegúrate de que los archivos Excel tengan el formato estándar del SMV para un análisis correcto.")
 
 # ================= UPLOAD FILES =================
 archivos = st.file_uploader(
@@ -44,6 +59,8 @@ if not archivos:
     st.stop()
 
 # ================= UTILIDADES =================
+
+# Normalizar nombres de cuentas y empresas para comparaciones consistentes.
 def normalize_name(s):
     if not isinstance(s, str):
         return s
@@ -52,6 +69,7 @@ def normalize_name(s):
     s2 = re.sub(r'\s*\(\d+\)\s*$', '', s2)
     return s2
 
+#Convertir datos de Excel a números válidos para cálculos financieros.
 def limpiar_valor(valor):
     if valor is None:
         return 0.0
@@ -67,6 +85,7 @@ def limpiar_valor(valor):
     except:
         return 0.0
 
+# Buscar cuentas que contengan todas las palabras clave (búsqueda estricta).
 def buscar_cuenta_flexible(df, keywords_list):
     for keywords in keywords_list:
         for idx in df.index:
@@ -74,6 +93,7 @@ def buscar_cuenta_flexible(df, keywords_list):
                 return idx
     return None
 
+# Buscar cuentas que contengan cualquiera de las palabras clave (búsqueda amplia).
 def buscar_cuenta_parcial(df, keywords):
     for idx in df.index:
         if any(kw.upper() in idx.upper() for kw in keywords):
@@ -81,16 +101,21 @@ def buscar_cuenta_parcial(df, keywords):
     return None
 
 # ================= PROCESAR ARCHIVOS =================
+
+#Se crean diccionarios donde se guardaran todos los estados financieros 
 datos_balance = {}
 datos_resultados = {}
 datos_flujo_efectivo = {}
 
+#Barra de progreso y mensaje de estado
 progress_bar = st.progress(0)
 status_text = st.empty()
 
+#Recorre cada archivo que el usuario subio 
 for i, archivo in enumerate(archivos):
     status_text.text(f"📦 Procesando: {archivo.name}")
     
+#Leer el contenido del archivo
     contenido = None
     for cod in ['latin-1', 'cp1252', 'utf-8']:
         try:
@@ -99,14 +124,15 @@ for i, archivo in enumerate(archivos):
             break
         except:
             continue
-    
+#Verificación de lectura
     if not contenido:
         st.error(f"❌ No se pudo leer {archivo.name}")
         continue
     
     soup = BeautifulSoup(contenido, 'html.parser')
     
-    # Balance
+
+    # Extraer tabla del balance
     tabla_balance = soup.find('table', {'id': 'gvReporte'})
     if tabla_balance:
         filas = [[td.get_text(strip=True) for td in tr.find_all(['td', 'th'])] for tr in tabla_balance.find_all('tr') if tr.find_all(['td', 'th'])]
@@ -137,6 +163,7 @@ for i, archivo in enumerate(archivos):
                     elif datos_balance[anio][cuenta] == 0 and valor != 0:
                         datos_balance[anio][cuenta] = valor
     
+
     # Estado de Resultados
     tabla_resultados = soup.find('table', {'id': 'gvReporte1'})
     if tabla_resultados:
@@ -161,6 +188,8 @@ for i, archivo in enumerate(archivos):
                     if anio not in datos_resultados:
                         datos_resultados[anio] = {}
                     datos_resultados[anio][cuenta] = valor
+    
+
     
     # Flujo de Efectivo
     tabla_flujo = soup.find('table', {'id': 'gvReporte3'})
@@ -650,14 +679,15 @@ with tab4:
             chart.height = 7
             chart.width = 14
             
+            cats = Reference(ws_ratios, min_col=2, min_row=1, max_col=num_years+1, max_row=1)
             ratio_row_in_ratios = ratio_names.index(ratio) + 2
             data = Reference(ws_ratios, min_col=2, min_row=ratio_row_in_ratios, max_col=num_years+1, max_row=ratio_row_in_ratios)
-            cats = Reference(ws_ratios, min_col=2, min_row=1, max_col=num_years+1, max_row=1)
+            
             
             chart.add_data(data, titles_from_data=False)
             chart.set_categories(cats)
             
-            ws_graficas.add_chart(chart, f'A{current_row + 3}')
+            ws_graficas.add_chart(chart, f'B{current_row + 3}')
             current_row += 18
     
     output_formatted = io.BytesIO()
