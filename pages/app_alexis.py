@@ -100,6 +100,7 @@ def buscar_cuenta_parcial(df, keywords):
             return idx
     return None
 
+
 # ================= PROCESAR ARCHIVOS =================
 
 #Se crean diccionarios donde se guardaran todos los estados financieros 
@@ -132,7 +133,8 @@ for i, archivo in enumerate(archivos):
     soup = BeautifulSoup(contenido, 'html.parser')
     
 
-    # Extraer tabla del balance
+   
+    # =================ESTADO DE SITUACION FINANCIERA  =================
     tabla_balance = soup.find('table', {'id': 'gvReporte'})
     if tabla_balance:
         filas = [[td.get_text(strip=True) for td in tr.find_all(['td', 'th'])] for tr in tabla_balance.find_all('tr') if tr.find_all(['td', 'th'])]
@@ -164,10 +166,14 @@ for i, archivo in enumerate(archivos):
                         datos_balance[anio][cuenta] = valor
     
 
-    # Estado de Resultados
+    # ================= ESTADO DE RESULTADOS =================
+    # Busca la tabla del Estado de Resultados en el HTML (normalmente tiene id="gvReporte1")
     tabla_resultados = soup.find('table', {'id': 'gvReporte1'})
+
     if tabla_resultados:
+         # Extrae todas las filas de la tabla y el texto de cada celda (td o th)
         filas = [[td.get_text(strip=True) for td in tr.find_all(['td', 'th'])] for tr in tabla_resultados.find_all('tr') if tr.find_all(['td', 'th'])]
+
         if len(filas) > 1:
             encabezados = filas[0]
             columnas_anios = encabezados[2:]
@@ -190,7 +196,7 @@ for i, archivo in enumerate(archivos):
                     datos_resultados[anio][cuenta] = valor
     
 
-    
+
     # Flujo de Efectivo
     tabla_flujo = soup.find('table', {'id': 'gvReporte3'})
     if tabla_flujo:
@@ -233,6 +239,80 @@ if not df_resultados.empty:
     df_resultados = df_resultados.reindex(sorted(df_resultados.columns), axis=1)
 if not df_flujo_efectivo.empty:
     df_flujo_efectivo = df_flujo_efectivo.reindex(sorted(df_flujo_efectivo.columns), axis=1)
+
+# ================= FILTRAR SOLO EL ÚLTIMO AÑO =================
+anios_disponibles = set(df_balance.columns) | set(df_resultados.columns) | set(df_flujo_efectivo.columns)
+anio_maximo = max(anios_disponibles) if anios_disponibles else None
+
+def filtrar_ultimo_anio(df, anio_maximo):
+    if df.empty or anio_maximo is None:
+        return df
+    if anio_maximo in df.columns:
+        return df[[anio_maximo]]
+    return df
+
+df_balance = filtrar_ultimo_anio(df_balance, anio_maximo)
+df_resultados = filtrar_ultimo_anio(df_resultados, anio_maximo)
+df_flujo_efectivo = filtrar_ultimo_anio(df_flujo_efectivo, anio_maximo)
+
+
+filas_balance = [
+    "ACTIVOS",
+    "ACTIVOS CORRIENTES",
+    "TOTAL ACTIVOS CORRIENTES",
+    "ACTIVOS NO CORRIENTES",
+    "TOTAL ACTIVOS NO CORRIENTES",
+    "TOTAL DE ACTIVOS",
+    "PASIVOS Y PATRIMONIO",
+    "PASIVOS CORRIENTES",
+    "TOTAL PASIVOS CORRIENTES",
+    "PASIVOS NO CORRIENTES",
+    "TOTAL PASIVOS NO CORRIENTES",
+    "TOTAL PASIVOS",
+    "PATRIMONIO",
+    "TOTAL PATRIMONIO",
+    "TOTAL PASIVO Y PATRIMONIO"
+]
+
+
+# Estado de Resultados
+filas_resultados = [
+    "INGRESOS DE ACTIVIDADES ORDINARIAS",
+    "GANANCIA (PERDIDA) BRUTA",
+    "GANANCIA (PERDIDA) OPERATIVA",
+    "GANANCIA (PERDIDA) ANTES DE IMPUESTOS",
+    "GANANCIA (PERDIDA) NETA DEL EJERCICIO",
+    "GANANCIA (PERDIDA) POR ACCION",
+    "GANANCIA (PERDIDA) BASICA POR ACCION",
+    "GANANCIA (PERDIDA) DILUIDA POR ACCION",
+]
+
+# Estado de Flujo de Efectivo
+filas_flujo = [
+    "FLUJO DE EFECTIVO DE ACTIVIDADES DE OPERACIÓN",
+    "CLASES DE COBROS EN EFECTIVO POR ACTIVIDADES DE OPERACIÓN",
+    "CLASES DE PAGOS EN EFECTIVO POR ACTIVIDADES DE OPERACIÓN",
+    "FLUJOS DE EFECTIVO Y EQUIVALENTE AL EFECTIVO PROCEDENTE DE (UTILIZADOS EN) ACTIVIDADES DE OPERACIÓN",
+
+    "FLUJO DE EFECTIVO DE ACTIVIDADES DE INVERSIÓN",
+    "CLASES DE COBROS EN EFECTIVO POR ACTIVIDADES DE INVERSIÓN",
+    "CLASES DE PAGOS EN EFECTIVO POR ACTIVIDADES DE INVERSIÓN",
+    "FLUJOS DE EFECTIVO Y EQUIVALENTE AL EFECTIVO PROCEDENTE DE (UTILIZADOS EN) ACTIVIDADES DE INVERSIÓN",
+    
+    "FLUJO DE EFECTIVO DE ACTIVIDADES DE FINANCIACIÓN",
+    "CLASES DE COBROS EN EFECTIVO POR ACTIVIDADES DE FINANCIACIÓN",
+    "CLASES DE PAGOS EN EFECTIVO POR ACTIVIDADES DE FINANCIACIÓN",
+    "FLUJOS DE EFECTIVO Y EQUIVALENTE AL EFECTIVO PROCEDENTE DE (UTILIZADOS EN) ACTIVIDADES DE FINANCIACIÓN",
+   
+    "EFECTIVO Y EQUIVALENTE AL EFECTIVO AL FINALIZAR EL EJERCICIO"
+]   
+
+def resaltar_filas(s, lista_resaltar):
+    if s.name in lista_resaltar:
+        return ['background-color: #b3e5fc; font-weight: bold; color: black'] * len(s)
+    return [''] * len(s)
+
+
 
 # ================= ANÁLISIS V/H =================
 df_vertical_balance = pd.DataFrame()
@@ -436,23 +516,28 @@ tab1, tab2, tab3, tab4 = st.tabs(["📊 Estados Financieros", "📈 Análisis V/
 with tab1:
     st.subheader("💼 Estado de Situación Financiera")
     if not df_balance.empty:
-        st.dataframe(df_balance, use_container_width=True)
+        st.dataframe(df_balance.style.apply(lambda r: resaltar_filas(r, filas_balance), axis=1), use_container_width=True)
     else:
         st.warning("No se encontró data del Balance")
     
+
     st.markdown("---")
     st.subheader("💰 Estado de Resultados")
     if not df_resultados.empty:
-        st.dataframe(df_resultados, use_container_width=True)
+          st.dataframe(df_resultados.style.apply(lambda r: resaltar_filas(r, filas_resultados), axis=1), use_container_width=True)
     else:
         st.warning("No se encontró data del Estado de Resultados")
     
+
+
     st.markdown("---")
     st.subheader("💵 Estado de Flujo de Efectivo")
     if not df_flujo_efectivo.empty:
-        st.dataframe(df_flujo_efectivo, use_container_width=True)
+        st.dataframe(df_flujo_efectivo.style.apply(lambda r: resaltar_filas(r, filas_flujo), axis=1), use_container_width=True)
     else:
         st.warning("No se encontró data del Flujo de Efectivo")
+
+
 
 with tab2:
     st.subheader("📊 Análisis Vertical y Horizontal - Estado de Situación Financiera")
