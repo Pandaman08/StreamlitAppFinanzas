@@ -5,6 +5,7 @@ from bs4 import BeautifulSoup
 import re
 import unicodedata
 
+# Probando Commit - Germaín
 st.set_page_config(page_title="Consolidador SMV - Finanzas Corporativas", layout="wide")
 st.title("📊 Consolidador de Estados Financieros - SMV")
 st.markdown("Sube los archivos Excel descargados de la Superintendencia del Mercado de Valores (SMV).")
