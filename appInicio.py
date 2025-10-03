@@ -6,12 +6,16 @@ from exporter import exportar_a_excel
 import plotly.graph_objects as go
 import pandas as pd
 
+
+
 # ================= CONFIGURACIÓN INICIAL =================
 st.set_page_config(
     page_title="Consolidador SMV - Finanzas Corporativas",
     layout="wide",
     page_icon="📊",
 )
+
+
 
 apply_custom_styles()
 
