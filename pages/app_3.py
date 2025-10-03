@@ -8,14 +8,21 @@ import plotly.graph_objects as go
 from openpyxl import load_workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
-from openpyxl.chart import LineChart, Reference
+from openpyxl.chart import BarChart, Reference,Series,ScatterChart
 from openpyxl.formatting.rule import ColorScaleRule
+from openpyxl.chart.axis import ChartLines
+import matplotlib
+matplotlib.use('Agg')  # Para evitar problemas en Streamlit
+import matplotlib.pyplot as plt
+from openpyxl.drawing.image import Image
+import os
+import tempfile
 
 st.set_page_config(page_title="Consolidador SMV - Finanzas Corporativas", layout="wide")
 
 # ================= HEADER =================
 st.title("📊 Consolidador de Estados Financieros - SMV")
-st.markdown("**Análisis Financiero Automatizado** | Sube archivos Excel del SMV y obtén análisis completo con gráficas.")
+st.markdown("**Análisis Financiero Automatizado** | Sube archivos Excel del SMV (2002-2024) y obtén análisis completo con gráficas.")
 
 # ================= SIDEBAR =================
 with st.sidebar:
@@ -26,7 +33,7 @@ with st.sidebar:
     st.markdown("### 📋 Instrucciones")
     st.info("""
     1. Descarga archivos Excel (.xls) del SMV
-    2. Súbelos (pueden ser de cualquier año)
+    2. Súbelos (pueden ser de cualquier año: 2002-2024)
     3. Espera el procesamiento
     4. Revisa resultados y descarga el consolidado
     """)
@@ -69,15 +76,11 @@ def limpiar_valor(valor):
         return 0.0
 
 def mapear_cuenta_normalizada(cuenta_original, anio):
-    """
-    Mapea nombres de cuentas antiguas (pre-2010) a nomenclatura moderna.
-    Devuelve el nombre normalizado estándar.
-    """
+    """Mapea nombres de cuentas antiguas (pre-2010) a nomenclatura moderna."""
     cuenta = normalize_name(cuenta_original)
     
-    # Diccionario de mapeo - VERSIÓN EXPANDIDA con variantes
     mapeo_antiguo = {
-        # Balance General - Activos
+        # Balance - Activos
         "CAJA Y BANCOS": "EFECTIVO Y EQUIVALENTES AL EFECTIVO",
         "VALORES NEGOCIABLES": "OTROS ACTIVOS FINANCIEROS",
         "EXISTENCIAS": "INVENTARIOS",
@@ -90,14 +93,14 @@ def mapear_cuenta_normalizada(cuenta_original, anio):
         "OTROS ACTIVOS": "OTROS ACTIVOS NO FINANCIEROS",
         "IMPUESTO A LA RENTA Y PARTICIPACIONES DIFERIDOS ACTIVO": "ACTIVOS POR IMPUESTOS DIFERIDOS",
         
-        # Balance General - Pasivos
+        # Balance - Pasivos
         "SOBREGIROS Y PAGARES BANCARIOS": "OTROS PASIVOS FINANCIEROS",
         "PARTE CORRIENTE DE LAS DEUDAS A LARGO PLAZO": "OTROS PASIVOS FINANCIEROS",
         "DEUDAS A LARGO PLAZO": "OTROS PASIVOS FINANCIEROS",
         "INGRESOS DIFERIDOS": "INGRESOS DIFERIDOS",
         "IMPUESTO A LA RENTA Y PARTICIPACIONES DIFERIDOS PASIVO": "PASIVOS POR IMPUESTOS DIFERIDOS",
         
-        # Balance General - Patrimonio
+        # Balance - Patrimonio
         "CAPITAL": "CAPITAL EMITIDO",
         "CAPITAL ADICIONAL": "PRIMAS DE EMISION",
         "EXCEDENTE DE REVALUACION": "SUPERAVIT DE REVALUACION",
@@ -105,7 +108,7 @@ def mapear_cuenta_normalizada(cuenta_original, anio):
         "OTRAS RESERVAS": "OTRAS RESERVAS DE PATRIMONIO",
         "RESULTADOS ACUMULADOS": "RESULTADOS ACUMULADOS",
         
-        # Estado de Resultados - VARIANTES CRÍTICAS
+        # Estado de Resultados
         "VENTAS NETAS INGRESOS OPERACIONALES": "INGRESOS DE ACTIVIDADES ORDINARIAS",
         "VENTAS NETAS": "INGRESOS DE ACTIVIDADES ORDINARIAS",
         "OTROS INGRESOS OPERACIONALES": "OTROS INGRESOS OPERATIVOS",
@@ -133,30 +136,22 @@ def mapear_cuenta_normalizada(cuenta_original, anio):
         "UTILIDAD PERDIDA NETA ATRIBUIBLE A LOS ACCIONISTAS": "GANANCIA PERDIDA NETA DEL EJERCICIO"
     }
     
-    # Si es pre-2010, intentar mapear
     if anio < 2010:
-        # Primero intentar mapeo exacto
         if cuenta in mapeo_antiguo:
             return mapeo_antiguo[cuenta]
         
-        # Búsqueda flexible por palabras clave para casos edge
-        for key_antigua, key_moderna in mapeo_antiguo.items():
-            # Coincidencia flexible: si contiene las palabras principales
-            if "VENTAS" in cuenta and "NETAS" in cuenta and "VENTAS NETAS" in key_antigua:
-                return key_moderna
-            if "UTILIDAD" in cuenta and "NETA" in cuenta and "EJERCICIO" in cuenta:
-                return "GANANCIA PERDIDA NETA DEL EJERCICIO"
-            if "EXISTENCIAS" in cuenta or cuenta == "EXISTENCIAS":
-                return "INVENTARIOS"
+        # Búsqueda flexible
+        if "VENTAS" in cuenta and "NETAS" in cuenta:
+            return "INGRESOS DE ACTIVIDADES ORDINARIAS"
+        if "UTILIDAD" in cuenta and "NETA" in cuenta and "EJERCICIO" in cuenta:
+            return "GANANCIA PERDIDA NETA DEL EJERCICIO"
+        if "EXISTENCIAS" in cuenta:
+            return "INVENTARIOS"
     
-    # Para cuentas modernas o sin mapeo, devolver normalizado
     return cuenta
 
 def buscar_cuenta_flexible(df, keywords_list):
-    """
-    Busca una cuenta que coincida con cualquiera de las listas de keywords.
-    Retorna la primera coincidencia encontrada.
-    """
+    """Busca una cuenta que coincida con cualquiera de las listas de keywords."""
     for keywords in keywords_list:
         for idx in df.index:
             if all(kw.upper() in idx.upper() for kw in keywords):
@@ -164,10 +159,7 @@ def buscar_cuenta_flexible(df, keywords_list):
     return None
 
 def buscar_cuenta_parcial(df, keywords):
-    """
-    Busca una cuenta con coincidencia parcial (al menos una palabra clave).
-    Útil como fallback cuando buscar_cuenta_flexible no encuentra nada.
-    """
+    """Búsqueda con coincidencia parcial (al menos una palabra clave)."""
     for idx in df.index:
         if any(kw.upper() in idx.upper() for kw in keywords):
             return idx
@@ -199,7 +191,7 @@ for i, archivo in enumerate(archivos):
     
     soup = BeautifulSoup(contenido, 'html.parser')
     
-    # ---------- Procesar Balance General / Estado de Situación Financiera ----------
+    # Procesar Balance
     tabla_balance = soup.find('table', {'id': 'gvReporte'})
     
     if tabla_balance:
@@ -220,16 +212,12 @@ for i, archivo in enumerate(archivos):
                 else:
                     anios.append(None)
 
-            # Lista de encabezados de sección a ignorar
             encabezados_seccion = [
-                "ACTIVOS", "ACTIVO",
-                "ACTIVOS CORRIENTES", "ACTIVO CORRIENTE",
+                "ACTIVOS", "ACTIVO", "ACTIVOS CORRIENTES", "ACTIVO CORRIENTE",
                 "ACTIVOS NO CORRIENTES", "ACTIVO NO CORRIENTE",
-                "PASIVOS", "PASIVO",
-                "PASIVOS CORRIENTES", "PASIVO CORRIENTE",
+                "PASIVOS", "PASIVO", "PASIVOS CORRIENTES", "PASIVO CORRIENTE",
                 "PASIVOS NO CORRIENTES", "PASIVO NO CORRIENTE",
-                "PATRIMONIO", "PATRIMONIO NETO",
-                "PASIVO Y PATRIMONIO", "PASIVOS Y PATRIMONIO",
+                "PATRIMONIO", "PATRIMONIO NETO", "PASIVO Y PATRIMONIO", "PASIVOS Y PATRIMONIO",
                 "CUENTAS POR COBRAR COMERCIALES Y OTRAS CUENTAS POR COBRAR",
                 "CUENTAS POR PAGAR COMERCIALES Y OTRAS CUENTAS POR PAGAR"
             ]
@@ -245,11 +233,9 @@ for i, archivo in enumerate(archivos):
                 
                 cuenta_normalizada_temp = normalize_name(cuenta_raw)
                 
-                # Ignorar encabezados de sección
                 if cuenta_normalizada_temp in encabezados_seccion:
                     continue
                 
-                # Verificar si todos los valores son 0 (encabezado sin datos)
                 valores_fila = [limpiar_valor(v) for v in fila[2:]]
                 if all(v == 0 for v in valores_fila):
                     continue
@@ -260,20 +246,17 @@ for i, archivo in enumerate(archivos):
                         continue
                     
                     valor = limpiar_valor(valor_str)
-                    
-                    # Mapear cuenta según año
                     cuenta_normalizada = mapear_cuenta_normalizada(cuenta_raw, anio)
                     
                     if anio not in datos_balance:
                         datos_balance[anio] = {}
                     
-                    # Lógica mejorada: priorizar valores no-cero
                     if cuenta_normalizada not in datos_balance[anio]:
                         datos_balance[anio][cuenta_normalizada] = valor
                     elif datos_balance[anio][cuenta_normalizada] == 0 and valor != 0:
                         datos_balance[anio][cuenta_normalizada] = valor
 
-    # ---------- Procesar Estado de Resultados ----------
+    # Procesar Estado de Resultados
     tabla_resultados = soup.find('table', {'id': 'gvReporte1'})
     
     if tabla_resultados:
@@ -310,17 +293,14 @@ for i, archivo in enumerate(archivos):
                         continue
                     
                     valor = limpiar_valor(valor_str)
-                    
-                    # Mapear cuenta según año
                     cuenta_normalizada = mapear_cuenta_normalizada(cuenta_raw, anio)
                     
                     if anio not in datos_resultados:
                         datos_resultados[anio] = {}
                     
-                    # Sobrescribir con el último valor (acumulado)
                     datos_resultados[anio][cuenta_normalizada] = valor
 
-    # ---------- Procesar Estado de Flujo de Efectivo ----------
+    # Procesar Flujo de Efectivo
     tabla_flujo = soup.find('table', {'id': 'gvReporte3'})
     
     if tabla_flujo:
@@ -369,7 +349,6 @@ for i, archivo in enumerate(archivos):
 status_text.empty()
 progress_bar.empty()
 
-# ================= CREAR DATAFRAMES =================
 df_balance = pd.DataFrame.from_dict(datos_balance, orient='index').fillna(0.0).T if datos_balance else pd.DataFrame()
 df_resultados = pd.DataFrame.from_dict(datos_resultados, orient='index').fillna(0.0).T if datos_resultados else pd.DataFrame()
 df_flujo_efectivo = pd.DataFrame.from_dict(datos_flujo_efectivo, orient='index').fillna(0.0).T if datos_flujo_efectivo else pd.DataFrame()
@@ -402,7 +381,6 @@ if not df_balance.empty:
                 df_vertical_balance[col] = (df_vertical_balance[col] / total_activos[col]) * 100
         df_vertical_balance = df_vertical_balance.round(2)
     
-    # Horizontal
     df_horizontal_balance = df_balance.copy()
     columnas = df_horizontal_balance.columns.tolist()
     nuevas_columnas = []
@@ -417,7 +395,6 @@ if not df_balance.empty:
     df_horizontal_balance = df_horizontal_balance[nuevas_columnas].round(2)
     df_horizontal_balance = df_horizontal_balance.replace([float('inf'), float('-inf')], pd.NA)
 
-# Estado de Resultados
 df_vertical_resultados = pd.DataFrame()
 df_horizontal_resultados = pd.DataFrame()
 
@@ -435,7 +412,6 @@ if not df_resultados.empty:
                 df_vertical_resultados[col] = (df_vertical_resultados[col] / ventas[col]) * 100
         df_vertical_resultados = df_vertical_resultados.round(2)
     
-    # Horizontal
     df_horizontal_resultados = df_resultados.copy()
     columnas = df_horizontal_resultados.columns.tolist()
     nuevas_columnas = []
@@ -452,50 +428,53 @@ if not df_resultados.empty:
 
 # ================= CÁLCULO DE RATIOS =================
 ratios_data = {}
+debug_info = {}
 anios_comunes = sorted(list(set(df_balance.columns) & set(df_resultados.columns))) if (not df_balance.empty and not df_resultados.empty) else []
 
 if anios_comunes:
     for i, anio in enumerate(anios_comunes):
         ratios_data[anio] = {}
+        debug_info[anio] = {}
         
-        # --- BALANCE GENERAL ---
         # Activo Corriente
         act_corr = buscar_cuenta_flexible(df_balance, [
             ["TOTAL", "ACTIVO", "CORRIENTE"],
             ["TOTAL", "ACTIVOS", "CORRIENTES"]
         ])
-        activo_corriente = df_balance.loc[act_corr, anio] if act_corr else 0.0
+        activo_corriente = df_balance.loc[act_corr, anio] if act_corr in df_balance.index else 0.0
+        debug_info[anio]["activo_corriente"] = f"{act_corr} = {activo_corriente}"
         
-        # Inventarios - Búsqueda mejorada
+        # Inventarios
         inv = buscar_cuenta_flexible(df_balance, [
             ["INVENTARIOS"],
             ["EXISTENCIAS"]
         ])
-        # Si no encuentra, buscar parcialmente
         if not inv:
-            inv = buscar_cuenta_parcial(df_balance, ["INVENTARIO", "EXISTENCIA"])
-        inventarios = df_balance.loc[inv, anio] if inv else 0.0
+            inv = buscar_cuenta_parcial(df_balance, ["INVENTARIO", "EXISTENCIA"]) if not df_balance.empty else None
+        inventarios = df_balance.loc[inv, anio] if inv in df_balance.index else 0.0
+        debug_info[anio]["inventarios"] = f"{inv} = {inventarios}"
         
         # Pasivo Corriente
         pas_corr = buscar_cuenta_flexible(df_balance, [
             ["TOTAL", "PASIVO", "CORRIENTE"],
             ["TOTAL", "PASIVOS", "CORRIENTES"]
         ])
-        pasivo_corriente = df_balance.loc[pas_corr, anio] if pas_corr else 0.0
+        pasivo_corriente = df_balance.loc[pas_corr, anio] if pas_corr in df_balance.index else 0.0
+        debug_info[anio]["pasivo_corriente"] = f"{pas_corr} = {pasivo_corriente}"
         
-        # Cuentas por Cobrar - Búsqueda ampliada
+        # Cuentas por Cobrar
         cxc_comerciales = buscar_cuenta_flexible(df_balance, [
             ["CUENTAS", "COBRAR", "COMERCIALES"]
         ])
         if not cxc_comerciales:
-            cxc_comerciales = buscar_cuenta_parcial(df_balance, ["CUENTAS", "COBRAR", "COMERCIAL"])
+            cxc_comerciales = buscar_cuenta_parcial(df_balance, ["CUENTAS", "COBRAR", "COMERCIAL"]) if not df_balance.empty else None
         
         cxc_vinculadas = buscar_cuenta_flexible(df_balance, [
             ["CUENTAS", "COBRAR", "ENTIDADES", "RELACIONADAS"],
             ["CUENTAS", "COBRAR", "VINCULADAS"]
         ])
         if not cxc_vinculadas:
-            cxc_vinculadas = buscar_cuenta_parcial(df_balance, ["CUENTAS", "COBRAR", "VINCULADA"])
+            cxc_vinculadas = buscar_cuenta_parcial(df_balance, ["CUENTAS", "COBRAR", "VINCULADA"]) if not df_balance.empty else None
         
         otras_cxc = buscar_cuenta_flexible(df_balance, [
             ["OTRAS", "CUENTAS", "COBRAR"]
@@ -505,129 +484,131 @@ if anios_comunes:
         for cxc_idx in [cxc_comerciales, cxc_vinculadas, otras_cxc]:
             if cxc_idx and cxc_idx in df_balance.index:
                 cxc_val += df_balance.loc[cxc_idx, anio]
+        debug_info[anio]["cxc"] = f"com:{cxc_comerciales}, vinc:{cxc_vinculadas}, otras:{otras_cxc} = {cxc_val}"
         
         # Activos Totales
         act_tot = buscar_cuenta_flexible(df_balance, [
             ["TOTAL", "ACTIVO"],
             ["TOTAL", "ACTIVOS"]
         ])
-        activos_totales = df_balance.loc[act_tot, anio] if act_tot else 0.0
+        activos_totales = df_balance.loc[act_tot, anio] if act_tot in df_balance.index else 0.0
+        debug_info[anio]["activos_totales"] = f"{act_tot} = {activos_totales}"
         
         # Pasivo Total
         pas_tot = buscar_cuenta_flexible(df_balance, [
             ["TOTAL", "PASIVO"],
             ["TOTAL", "PASIVOS"]
         ])
-        pasivo_total = df_balance.loc[pas_tot, anio] if pas_tot else 0.0
+        pasivo_total = df_balance.loc[pas_tot, anio] if pas_tot in df_balance.index else 0.0
         
-        # Patrimonio - Búsqueda mejorada
+        # Patrimonio
         patr = buscar_cuenta_flexible(df_balance, [
             ["TOTAL", "PATRIMONIO"],
             ["PATRIMONIO", "NETO"],
             ["TOTAL", "PATRIMONIO", "NETO"]
         ])
         if not patr:
-            patr = buscar_cuenta_parcial(df_balance, ["PATRIMONIO"])
-        patrimonio = df_balance.loc[patr, anio] if patr else 0.0
+            patr = buscar_cuenta_parcial(df_balance, ["PATRIMONIO"]) if not df_balance.empty else None
+        patrimonio = df_balance.loc[patr, anio] if patr in df_balance.index else 0.0
         
-        # Si no se encuentra, calcular
         if patrimonio == 0.0 and activos_totales != 0.0:
             patrimonio = activos_totales - pasivo_total
+        debug_info[anio]["patrimonio"] = f"{patr} = {patrimonio}"
         
-        # --- ESTADO DE RESULTADOS ---
-        # Ventas - Búsqueda ampliada
+        # Ventas
         ventas = buscar_cuenta_flexible(df_resultados, [
-            ["INGRESOS", "ACTIVIDADES", "ORDINARIAS"],
-            ["VENTAS", "NETAS"],
-            ["VENTAS", "NETAS", "INGRESOS", "OPERACIONALES"]
+            ["INGRESOS", "ACTIVIDADES", "ORDINARIAS"]
         ])
         if not ventas:
-            ventas = buscar_cuenta_parcial(df_resultados, ["VENTAS", "NETAS"])
+            ventas = buscar_cuenta_parcial(df_resultados, ["INGRESOS", "ACTIVIDADES"]) if not df_resultados.empty else None
         if not ventas:
-            ventas = buscar_cuenta_parcial(df_resultados, ["INGRESOS", "ACTIVIDADES"])
+            ventas = buscar_cuenta_parcial(df_resultados, ["VENTAS", "NETAS"]) if not df_resultados.empty else None
         if not ventas:
-            ventas = buscar_cuenta_parcial(df_resultados, ["INGRESOS", "OPERACIONALES"])
-        ventas_val = df_resultados.loc[ventas, anio] if ventas else 0.0
+            ventas = buscar_cuenta_parcial(df_resultados, ["INGRESOS", "OPERACIONALES"]) if not df_resultados.empty else None
+        ventas_val = df_resultados.loc[ventas, anio] if ventas in df_resultados.index else 0.0
+        debug_info[anio]["ventas"] = f"{ventas} = {ventas_val}"
         
-        # Costo de Ventas - Búsqueda ampliada
+        # Costo de Ventas
         costo = buscar_cuenta_flexible(df_resultados, [
-            ["COSTO", "VENTAS"],
-            ["COSTO", "DE", "VENTAS"]
+            ["COSTO", "VENTAS"]
         ])
         if not costo:
-            costo = buscar_cuenta_parcial(df_resultados, ["COSTO", "VENTA"])
-        costo_ventas = df_resultados.loc[costo, anio] if costo else 0.0
+            costo = buscar_cuenta_parcial(df_resultados, ["COSTO", "VENTA"]) if not df_resultados.empty else None
+        costo_ventas = df_resultados.loc[costo, anio] if costo in df_resultados.index else 0.0
+        debug_info[anio]["costo_ventas"] = f"{costo} = {costo_ventas}"
         
-        # Utilidad Neta - Búsqueda ampliada
+        # Utilidad Neta
         util = buscar_cuenta_flexible(df_resultados, [
-            ["GANANCIA", "PERDIDA", "NETA", "EJERCICIO"],
-            ["UTILIDAD", "PERDIDA", "NETA", "EJERCICIO"],
-            ["GANANCIA", "NETA", "EJERCICIO"],
-            ["UTILIDAD", "NETA", "EJERCICIO"]
+            ["GANANCIA", "PERDIDA", "NETA", "EJERCICIO"]
         ])
         if not util:
-            util = buscar_cuenta_parcial(df_resultados, ["UTILIDAD", "NETA", "EJERCICIO"])
+            util = buscar_cuenta_parcial(df_resultados, ["GANANCIA", "NETA", "EJERCICIO"]) if not df_resultados.empty else None
         if not util:
-            util = buscar_cuenta_parcial(df_resultados, ["GANANCIA", "NETA"])
-        if not util:
-            # Buscar cualquier línea que contenga "UTILIDAD" y "EJERCICIO"
+            util = buscar_cuenta_parcial(df_resultados, ["UTILIDAD", "NETA", "EJERCICIO"]) if not df_resultados.empty else None
+        if not util and not df_resultados.empty:
             for idx in df_resultados.index:
                 if "UTILIDAD" in idx and "EJERCICIO" in idx and "NETA" in idx:
                     util = idx
                     break
-        if not util:
-            # Buscar "RESULTADO" como alternativa
-            for idx in df_resultados.index:
-                if "RESULTADO" in idx and ("EJERCICIO" in idx or "NETO" in idx):
-                    util = idx
-                    break
-        utilidad_neta = df_resultados.loc[util, anio] if util else 0.0
+        utilidad_neta = df_resultados.loc[util, anio] if util in df_resultados.index else 0.0
+        debug_info[anio]["utilidad_neta"] = f"{util} = {utilidad_neta}"
         
-        # --- PROMEDIOS CON AÑO ANTERIOR ---
+        # Promedios
         cxc_prom = cxc_val
         inv_prom = inventarios
         act_prom = activos_totales
         patr_prom = patrimonio
-        
+
         if i > 0:
             anio_ant = anios_comunes[i-1]
-            
+
             # CxC anterior
             cxc_ant = 0.0
             for cxc_idx in [cxc_comerciales, cxc_vinculadas, otras_cxc]:
                 if cxc_idx and cxc_idx in df_balance.index:
                     cxc_ant += df_balance.loc[cxc_idx, anio_ant]
-            
-            # Inventarios anterior
-            inv_ant = df_balance.loc[inv, anio_ant] if inv else 0.0
-            
-            # Activos anterior
-            act_ant = df_balance.loc[act_tot, anio_ant] if act_tot else 0.0
-            
-            # Patrimonio anterior
-            patr_ant = df_balance.loc[patr, anio_ant] if patr else 0.0
-            if patr_ant == 0.0 and act_ant != 0.0:
-                pas_ant = df_balance.loc[pas_tot, anio_ant] if pas_tot else 0.0
-                patr_ant = act_ant - pas_ant
-            
-            cxc_prom = (cxc_val + cxc_ant) / 2 if (cxc_val + cxc_ant) != 0 else cxc_val
-            inv_prom = (inventarios + inv_ant) / 2 if (inventarios + inv_ant) != 0 else inventarios
-            act_prom = (activos_totales + act_ant) / 2 if (activos_totales + act_ant) != 0 else activos_totales
-            patr_prom = (patrimonio + patr_ant) / 2 if (patrimonio + patr_ant) != 0 else patrimonio
-        
-        # --- CALCULAR RATIOS ---
-        ratios_data[anio]["Liquidez Corriente"] = activo_corriente / pasivo_corriente if pasivo_corriente != 0 else None
-        ratios_data[anio]["Prueba Ácida"] = (activo_corriente - inventarios) / pasivo_corriente if pasivo_corriente != 0 else None
-        ratios_data[anio]["Rotación CxC"] = ventas_val / cxc_prom if cxc_prom != 0 else None
-        ratios_data[anio]["Rotación Inventarios"] = abs(costo_ventas) / inv_prom if inv_prom != 0 else None
-        ratios_data[anio]["Rotación Activos Totales"] = ventas_val / act_prom if act_prom != 0 else None
-        ratios_data[anio]["Razón Deuda Total"] = pasivo_total / activos_totales if activos_totales != 0 else None
-        ratios_data[anio]["Razón Deuda/Patrimonio"] = pasivo_total / patrimonio if patrimonio != 0 else None
-        ratios_data[anio]["Margen Neto"] = utilidad_neta / ventas_val if ventas_val != 0 else None
-        ratios_data[anio]["ROA"] = utilidad_neta / act_prom if act_prom != 0 else None
-        ratios_data[anio]["ROE"] = utilidad_neta / patr_prom if patr_prom != 0 else None
 
-df_ratios = pd.DataFrame.from_dict(ratios_data, orient='index').round(4).T if ratios_data else pd.DataFrame()
+            # Inventarios anteriores
+            inv_ant = df_balance.loc[inv, anio_ant] if inv in df_balance.index else 0.0
+            act_ant = df_balance.loc[act_tot, anio_ant] if act_tot in df_balance.index else 0.0
+
+            # Patrimonio anterior
+            patr_ant = df_balance.loc[patr, anio_ant] if patr in df_balance.index else 0.0
+            if patr_ant == 0.0 and act_ant != 0.0:
+                pas_ant = df_balance.loc[pas_tot, anio_ant] if pas_tot in df_balance.index else 0.0
+                patr_ant = act_ant - pas_ant
+
+            # Promedios con control
+            cxc_prom = (cxc_val + cxc_ant) / 2 if (cxc_val + cxc_ant) != 0 else "N/A"
+            inv_prom = (inventarios + inv_ant) / 2 if (inventarios + inv_ant) != 0 else "N/A"
+            act_prom = (activos_totales + act_ant) / 2 if (activos_totales + act_ant) != 0 else "N/A"
+            patr_prom = (patrimonio + patr_ant) / 2 if (patrimonio + patr_ant) != 0 else "N/A"
+
+        # Calcular ratios con "N/A" si no se puede
+        def safe_div(num, den):
+            if isinstance(den, (int, float)) and den != 0:
+                return num / den
+            return "N/A"
+
+        ratios_data[anio]["Liquidez Corriente"] = safe_div(activo_corriente, pasivo_corriente)
+        ratios_data[anio]["Prueba Ácida"] = safe_div((activo_corriente - inventarios), pasivo_corriente)
+        ratios_data[anio]["Rotación CxC"] = safe_div(ventas_val, cxc_prom) if not isinstance(cxc_prom, str) else "N/A"
+        ratios_data[anio]["Rotación Inventarios"] = safe_div(abs(costo_ventas), inv_prom) if not isinstance(inv_prom, str) else "N/A"
+        ratios_data[anio]["Rotación Activos Totales"] = safe_div(ventas_val, act_prom) if not isinstance(act_prom, str) else "N/A"
+        ratios_data[anio]["Razón Deuda Total"] = safe_div(pasivo_total, activos_totales)
+        ratios_data[anio]["Razón Deuda/Patrimonio"] = safe_div(pasivo_total, patrimonio)
+        ratios_data[anio]["Margen Neto"] = safe_div(utilidad_neta, ventas_val)
+        ratios_data[anio]["ROA"] = safe_div(utilidad_neta, act_prom) if not isinstance(act_prom, str) else "N/A"
+        ratios_data[anio]["ROE"] = safe_div(utilidad_neta, patr_prom) if not isinstance(patr_prom, str) else "N/A"
+
+# Crear DataFrame de ratios y redondear sólo celdas numéricas
+if ratios_data:
+    df_ratios = pd.DataFrame.from_dict(ratios_data, orient='index')
+    def round_if_num(x):
+        return round(x, 4) if isinstance(x, (int, float)) else x
+    df_ratios = df_ratios.applymap(round_if_num).T
+else:
+    df_ratios = pd.DataFrame()
 
 # ================= SIDEBAR STATUS =================
 with st.sidebar:
@@ -636,6 +617,15 @@ with st.sidebar:
     if anios_comunes:
         st.info(f"📅 **Años:** {', '.join(map(str, anios_comunes))}")
     st.metric("Ratios Calculados", len(df_ratios) if not df_ratios.empty else 0)
+    
+    # Debug checkbox
+    if st.checkbox("🐛 Mostrar Debug Info", value=False):
+        st.markdown("### Debug: Cuentas encontradas")
+        for anio_debug in anios_comunes:
+            if anio_debug in debug_info:
+                with st.expander(f"Año {anio_debug}"):
+                    for key, val in debug_info[anio_debug].items():
+                        st.text(f"{key}: {val}")
 
 # ================= TABS =================
 tab1, tab2, tab3, tab4 = st.tabs(["📊 Estados Financieros", "📈 Análisis V/H", "🧮 Ratios y Gráficas", "📥 Descargar"])
@@ -693,58 +683,43 @@ with tab3:
     st.subheader("🧮 Ratios Financieros")
     
     if not df_ratios.empty:
-        # Métricas principales
         ultimo_anio = df_ratios.columns[-1]
         penultimo_anio = df_ratios.columns[-2] if len(df_ratios.columns) > 1 else ultimo_anio
         
+        # Helper para mostrar métricas con manejo de "N/A"
+        def format_pct(val):
+            return f"{val:.2%}" if isinstance(val, (int, float)) else "N/A"
+        def format_num(val, dec=2):
+            return f"{val:.{dec}f}" if isinstance(val, (int, float)) else "N/A"
+        
         col1, col2, col3, col4 = st.columns(4)
         with col1:
-            valor_actual = df_ratios.loc['ROE', ultimo_anio] if 'ROE' in df_ratios.index and not pd.isna(df_ratios.loc['ROE', ultimo_anio]) else 0
-            valor_anterior = df_ratios.loc['ROE', penultimo_anio] if 'ROE' in df_ratios.index and not pd.isna(df_ratios.loc['ROE', penultimo_anio]) else 0
-            delta = valor_actual - valor_anterior
-            st.metric("ROE", f"{valor_actual:.2%}", delta=f"{delta:.2%}")
+            val_actual = df_ratios.loc['ROE', ultimo_anio] if 'ROE' in df_ratios.index else "N/A"
+            val_anterior = df_ratios.loc['ROE', penultimo_anio] if 'ROE' in df_ratios.index else "N/A"
+            delta = val_actual - val_anterior if isinstance(val_actual,(int,float)) and isinstance(val_anterior,(int,float)) else None
+            st.metric("ROE", format_pct(val_actual), delta=(format_pct(delta) if delta is not None else None))
         
         with col2:
-            valor_actual = df_ratios.loc['ROA', ultimo_anio] if 'ROA' in df_ratios.index and not pd.isna(df_ratios.loc['ROA', ultimo_anio]) else 0
-            valor_anterior = df_ratios.loc['ROA', penultimo_anio] if 'ROA' in df_ratios.index and not pd.isna(df_ratios.loc['ROA', penultimo_anio]) else 0
-            delta = valor_actual - valor_anterior
-            st.metric("ROA", f"{valor_actual:.2%}", delta=f"{delta:.2%}")
+            val_actual = df_ratios.loc['ROA', ultimo_anio] if 'ROA' in df_ratios.index else "N/A"
+            val_anterior = df_ratios.loc['ROA', penultimo_anio] if 'ROA' in df_ratios.index else "N/A"
+            delta = val_actual - val_anterior if isinstance(val_actual,(int,float)) and isinstance(val_anterior,(int,float)) else None
+            st.metric("ROA", format_pct(val_actual), delta=(format_pct(delta) if delta is not None else None))
         
         with col3:
-            valor_actual = df_ratios.loc['Liquidez Corriente', ultimo_anio] if 'Liquidez Corriente' in df_ratios.index and not pd.isna(df_ratios.loc['Liquidez Corriente', ultimo_anio]) else 0
-            valor_anterior = df_ratios.loc['Liquidez Corriente', penultimo_anio] if 'Liquidez Corriente' in df_ratios.index and not pd.isna(df_ratios.loc['Liquidez Corriente', penultimo_anio]) else 0
-            delta = valor_actual - valor_anterior
-            st.metric("Liquidez Corriente", f"{valor_actual:.2f}", delta=f"{delta:.2f}")
+            val_actual = df_ratios.loc['Liquidez Corriente', ultimo_anio] if 'Liquidez Corriente' in df_ratios.index else "N/A"
+            val_anterior = df_ratios.loc['Liquidez Corriente', penultimo_anio] if 'Liquidez Corriente' in df_ratios.index else "N/A"
+            delta = val_actual - val_anterior if isinstance(val_actual,(int,float)) and isinstance(val_anterior,(int,float)) else None
+            st.metric("Liquidez Corriente", format_num(val_actual,2), delta=(format_num(delta,2) if delta is not None else None))
         
         with col4:
-            valor_actual = df_ratios.loc['Margen Neto', ultimo_anio] if 'Margen Neto' in df_ratios.index and not pd.isna(df_ratios.loc['Margen Neto', ultimo_anio]) else 0
-            valor_anterior = df_ratios.loc['Margen Neto', penultimo_anio] if 'Margen Neto' in df_ratios.index and not pd.isna(df_ratios.loc['Margen Neto', penultimo_anio]) else 0
-            delta = valor_actual - valor_anterior
-            st.metric("Margen Neto", f"{valor_actual:.2%}", delta=f"{delta:.2%}")
+            val_actual = df_ratios.loc['Margen Neto', ultimo_anio] if 'Margen Neto' in df_ratios.index else "N/A"
+            val_anterior = df_ratios.loc['Margen Neto', penultimo_anio] if 'Margen Neto' in df_ratios.index else "N/A"
+            delta = val_actual - val_anterior if isinstance(val_actual,(int,float)) and isinstance(val_anterior,(int,float)) else None
+            st.metric("Margen Neto", format_pct(val_actual), delta=(format_pct(delta) if delta is not None else None))
         
         st.markdown("---")
         st.markdown("### 📋 Tabla de Ratios")
         st.dataframe(df_ratios, use_container_width=True)
-        
-        st.markdown("---")
-        st.markdown("### 🔥 Mapa de Calor - Todos los Ratios")
-        fig_heatmap = go.Figure(data=go.Heatmap(
-            z=df_ratios.values,
-            x=df_ratios.columns,
-            y=df_ratios.index,
-            colorscale='RdYlGn',
-            text=df_ratios.round(2).values,
-            texttemplate='%{text}',
-            textfont={"size": 10},
-            colorbar=dict(title="Valor")
-        ))
-        fig_heatmap.update_layout(
-            title=f"Mapa de Calor de Ratios Financieros - {nombre_empresa}",
-            xaxis_title="Año",
-            yaxis_title="Ratio",
-            height=500
-        )
-        st.plotly_chart(fig_heatmap, use_container_width=True)
         
         st.markdown("---")
         st.markdown("### 📈 Gráficas Individuales por Ratio")
@@ -752,13 +727,14 @@ with tab3:
         col1, col2 = st.columns(2)
         for idx, ratio in enumerate(df_ratios.index):
             fig = go.Figure()
+            yvals = pd.to_numeric(df_ratios.loc[ratio], errors='coerce')  # convierte "N/A" a NaN
             fig.add_trace(go.Scatter(
                 x=df_ratios.columns,
-                y=df_ratios.loc[ratio],
+                y=yvals,
                 mode='lines+markers',
                 name=ratio,
                 line=dict(width=3),
-                marker=dict(size=10)
+                marker=dict(size=8)
             ))
             fig.update_layout(
                 title=f"{ratio}",
@@ -767,7 +743,6 @@ with tab3:
                 height=350,
                 showlegend=False
             )
-            
             if idx % 2 == 0:
                 with col1:
                     st.plotly_chart(fig, use_container_width=True)
@@ -781,9 +756,7 @@ with tab4:
     st.subheader("📥 Descargar Reporte Consolidado")
     st.markdown(f"**Empresa:** {nombre_empresa}")
     st.markdown(f"**Años analizados:** {', '.join(map(str, anios_comunes)) if anios_comunes else 'N/A'}")
-    st.info("El archivo Excel incluirá todas las gráficas de ratios financieros")
     
-    # Crear Excel
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         if not df_balance.empty:
@@ -793,7 +766,6 @@ with tab4:
         if not df_flujo_efectivo.empty:
             df_flujo_efectivo.to_excel(writer, sheet_name='Flujo Efectivo', index_label='Cuenta')
         
-        # Análisis Balance
         if not df_vertical_balance.empty and not df_horizontal_balance.empty:
             df_vertical_balance.to_excel(writer, sheet_name='Analisis Balance', index_label='Cuenta', startrow=0)
             ws = writer.sheets['Analisis Balance']
@@ -805,7 +777,6 @@ with tab4:
         elif not df_horizontal_balance.empty:
             df_horizontal_balance.to_excel(writer, sheet_name='Analisis Balance', index_label='Cuenta')
         
-        # Análisis Resultados
         if not df_vertical_resultados.empty and not df_horizontal_resultados.empty:
             df_vertical_resultados.to_excel(writer, sheet_name='Analisis Resultados', index_label='Cuenta', startrow=0)
             ws = writer.sheets['Analisis Resultados']
@@ -820,7 +791,6 @@ with tab4:
         if not df_ratios.empty:
             df_ratios.to_excel(writer, sheet_name='Ratios', index_label='Ratio')
     
-    # Aplicar formato profesional
     output.seek(0)
     wb = load_workbook(output)
     
@@ -841,14 +811,12 @@ with tab4:
     for sheet_name in wb.sheetnames:
         ws = wb[sheet_name]
         
-        # Formato encabezados
         for cell in ws[1]:
             cell.fill = header_fill
             cell.font = header_font
             cell.alignment = Alignment(horizontal='center', vertical='center')
             cell.border = thin_border
         
-        # Buscar subtítulos
         for row in ws.iter_rows(min_row=2, max_row=ws.max_row, min_col=1, max_col=1):
             for cell in row:
                 if isinstance(cell.value, str) and "ANÁLISIS HORIZONTAL" in cell.value:
@@ -861,7 +829,6 @@ with tab4:
                         ws.cell(row=cell.row + 1, column=col).font = header_font
                         ws.cell(row=cell.row + 1, column=col).alignment = Alignment(horizontal='center', vertical='center')
         
-        # Formato celdas
         for row in ws.iter_rows(min_row=2, max_row=ws.max_row, min_col=1, max_col=ws.max_column):
             for cell in row:
                 cell.font = cell_font
@@ -880,7 +847,6 @@ with tab4:
                     else:
                         cell.number_format = '#,##0'
         
-        # Ajustar ancho
         for column in ws.columns:
             max_length = 0
             column_letter = get_column_letter(column[0].column)
@@ -893,89 +859,192 @@ with tab4:
             adjusted_width = min(max_length + 2, 50)
             ws.column_dimensions[column_letter].width = adjusted_width
     
-    # Agregar gráficas
-    if not df_ratios.empty and 'Ratios' in wb.sheetnames:
-        ws_ratios = wb['Ratios']
-        
-        if 'Ratios y Graficas' in wb.sheetnames:
-            del wb['Ratios y Graficas']
-        ws_graficas = wb.create_sheet('Ratios y Graficas')
-        
-        # Mapa de calor
-        ws_graficas['A1'] = 'MAPA DE CALOR DE RATIOS FINANCIEROS'
-        ws_graficas['A1'].font = Font(name='Calibri', size=14, bold=True, color="366092")
-        
-        ws_graficas.append([])
-        ws_graficas.append(['Ratio / Año'] + df_ratios.columns.tolist())
-        for ratio in df_ratios.index:
-            row_data = [ratio] + df_ratios.loc[ratio].tolist()
-            ws_graficas.append(row_data)
-        
-        num_years = len(df_ratios.columns)
-        ratio_names = df_ratios.index.tolist()
-        
-        color_scale = ColorScaleRule(
-            start_type='min', start_color='F8696B',
-            mid_type='percentile', mid_value=50, mid_color='FFEB84',
-            end_type='max', end_color='63BE7B'
-        )
-        
-        ws_graficas.conditional_formatting.add(
-            f'B3:{get_column_letter(num_years+1)}{len(ratio_names)+2}',
-            color_scale
-        )
-        
-        for cell in ws_graficas[2]:
-            cell.fill = header_fill
-            cell.font = header_font
-            cell.alignment = Alignment(horizontal='center', vertical='center')
-            cell.border = thin_border
-        
-        for row in ws_graficas.iter_rows(min_row=3, max_row=len(ratio_names)+2, min_col=1, max_col=num_years+1):
-            for cell in row:
-                cell.font = cell_font
-                cell.border = thin_border
-                cell.alignment = Alignment(horizontal='center', vertical='center')
-                if cell.column > 1:
-                    cell.number_format = '0.0000'
-        
-        ws_graficas.column_dimensions['A'].width = 30
-        for col in range(2, num_years + 2):
-            ws_graficas.column_dimensions[get_column_letter(col)].width = 12
-        
-        # Gráficas individuales
-        chart_start_row = len(ratio_names) + 5
-        ws_graficas.cell(row=chart_start_row, column=1, value='GRÁFICAS INDIVIDUALES POR RATIO')
-        ws_graficas.cell(row=chart_start_row, column=1).font = Font(name='Calibri', size=14, bold=True, color="366092")
-        
-        chart_row = chart_start_row + 2
-        chart_col = 1
-        charts_per_row = 2
-        chart_height = 15
-        chart_width = 10
-        
-        for idx, ratio in enumerate(ratio_names):
-            chart = LineChart()
-            chart.title = ratio
-            chart.style = 10
-            chart.y_axis.title = "Valor"
-            chart.x_axis.title = "Año"
-            chart.height = 7
-            chart.width = 12
-            
-            ratio_row = ratio_names.index(ratio) + 2
-            
-            data = Reference(ws_ratios, min_col=2, min_row=ratio_row, max_col=num_years+1, max_row=ratio_row)
-            cats = Reference(ws_ratios, min_col=2, min_row=1, max_col=num_years+1, max_row=1)
-            
-            chart.add_data(data, titles_from_data=False)
-            chart.set_categories(cats)
-            
-            row_position = chart_row + (idx // charts_per_row) * chart_height
-            col_position = chart_col + (idx % charts_per_row) * chart_width
-            
-            ws_graficas.add_chart(chart, f"{get_column_letter(col_position)}{row_position}")
+    # ----------------- APLICAR COLOR SCALE A LAS HOJAS DE ANALISIS -----------------
+    color_scale = ColorScaleRule(
+        start_type='min', start_color='F8696B',
+        mid_type='percentile', mid_value=50, mid_color='FFEB84',
+        end_type='max', end_color='63BE7B'
+    )
     
+    # Analisis Balance: aplicar a vertical y horizontal si existen
+    if 'Analisis Balance' in wb.sheetnames:
+        ws_ab = wb['Analisis Balance']
+        if not df_vertical_balance.empty:
+            n_rows_v = len(df_vertical_balance)
+            n_cols_v = df_vertical_balance.shape[1]
+            start_row_v = 2  # encabezado en fila 1
+            start_col_v = 2  # datos numéricos desde columna B
+            end_row_v = start_row_v + n_rows_v - 1
+            end_col_v = start_col_v + n_cols_v - 1
+            ws_ab.conditional_formatting.add(f"{get_column_letter(start_col_v)}{start_row_v}:{get_column_letter(end_col_v)}{end_row_v}", color_scale)
+        if not df_horizontal_balance.empty:
+            startrow_h = len(df_vertical_balance) + 4
+            n_rows_h = len(df_horizontal_balance)
+            n_cols_h = df_horizontal_balance.shape[1]
+            start_col_h = 2
+            end_col_h = start_col_h + n_cols_h - 1
+            start_row_h = startrow_h + 1
+            end_row_h = start_row_h + n_rows_h - 1
+            ws_ab.conditional_formatting.add(f"{get_column_letter(start_col_h)}{start_row_h}:{get_column_letter(end_col_h)}{end_row_h}", color_scale)
+    
+    # Analisis Resultados
+    if 'Analisis Resultados' in wb.sheetnames:
+        ws_ar = wb['Analisis Resultados']
+        if not df_vertical_resultados.empty:
+            n_rows_v = len(df_vertical_resultados)
+            n_cols_v = df_vertical_resultados.shape[1]
+            start_row_v = 2
+            start_col_v = 2
+            end_row_v = start_row_v + n_rows_v - 1
+            end_col_v = start_col_v + n_cols_v - 1
+            ws_ar.conditional_formatting.add(f"{get_column_letter(start_col_v)}{start_row_v}:{get_column_letter(end_col_v)}{end_row_v}", color_scale)
+        if not df_horizontal_resultados.empty:
+            startrow_h = len(df_vertical_resultados) + 4
+            n_rows_h = len(df_horizontal_resultados)
+            n_cols_h = df_horizontal_resultados.shape[1]
+            start_col_h = 2
+            end_col_h = start_col_h + n_cols_h - 1
+            start_row_h = startrow_h + 1
+            end_row_h = start_row_h + n_rows_h - 1
+            ws_ar.conditional_formatting.add(f"{get_column_letter(start_col_h)}{start_row_h}:{get_column_letter(end_col_h)}{end_row_h}", color_scale)
+    
+# ----------------- GRAFICAS EN EXCEL -----------------
+if not df_ratios.empty and 'Ratios' in wb.sheetnames:
+    ws_ratios = wb['Ratios']
+    
+    if 'Ratios y Graficas' in wb.sheetnames:
+        del wb['Ratios y Graficas']
+    ws_graficas = wb.create_sheet('Ratios y Graficas')
+    
+    ws_graficas['A1'] = 'TABLA DE RATIOS FINANCIEROS'
+    ws_graficas['A1'].font = Font(name='Calibri', size=14, bold=True, color="366092")
+    ws_graficas.merge_cells('A1:H1')
+    ws_graficas.append([])
+    
+    header_row = ['Ratio / Año'] + [str(y) for y in df_ratios.columns]
+    ws_graficas.append(header_row)
+    
+    for idx, cell in enumerate(ws_graficas[3], 1):
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = Alignment(horizontal='center', vertical='center')
+        cell.border = thin_border
+    
+    for ratio_name in df_ratios.index:
+        row_data = [ratio_name]
+        for col in df_ratios.columns:
+            val = df_ratios.loc[ratio_name, col]
+            if isinstance(val, (int, float)) and not pd.isna(val):
+                row_data.append(val)
+            else:
+                row_data.append("")
+        ws_graficas.append(row_data)
+    
+    for row_idx in range(4, 4 + len(df_ratios)):
+        ws_graficas.cell(row=row_idx, column=1).font = Font(name='Calibri', size=10, bold=True)
+        for col_idx in range(2, 2 + len(df_ratios.columns)):
+            cell = ws_graficas.cell(row=row_idx, column=col_idx)
+            cell.number_format = '0.0000'
+            cell.alignment = Alignment(horizontal='center')
+            cell.border = thin_border
+    
+    ws_graficas.column_dimensions['A'].width = 30
+    for col in range(2, len(df_ratios.columns) + 2):
+        ws_graficas.column_dimensions[get_column_letter(col)].width = 12
+
+   # ----------------- PREPARAR GRÁFICAS -----------------
+    chart_start_row = len(df_ratios) + 6
+    ws_graficas.cell(row=chart_start_row, column=1, value='GRÁFICAS INDIVIDUALES POR RATIO')
+    ws_graficas.cell(row=chart_start_row, column=1).font = Font(name='Calibri', size=14, bold=True, color="366092")
+
+    chart_row = chart_start_row + 2
+    charts_per_row = 2
+    chart_height = 15
+    chart_width = 10
+    num_years = len(df_ratios.columns)
+
+    # ⭐️ Asegurar que los años en la fila 3 sean TEXTO (ideal para BarChart)
+    for col in range(2, num_years + 2):
+        cell = ws_graficas.cell(row=3, column=col)
+        if isinstance(cell.value, (int, float)):
+            cell.value = str(int(cell.value))
+        elif cell.value is None:
+            cell.value = f"Año{col-1}"
+        cell.number_format = "@"  # Formato de texto
+
+    # ⭐️ CREAR GRÁFICAS DE BARRAS (UNA POR RATIO)
+    for idx, ratio_name in enumerate(df_ratios.index):
+        chart = BarChart()
+        chart.type = "col"  # Barras verticales
+        chart.title = ratio_name
+        chart.style = 12
+        chart.y_axis.title = "Valor"
+        chart.x_axis.title = "Año"
+        chart.height = 7.5
+        chart.width = 13
+        chart.legend = None
+
+        data_row = 4 + idx
+
+        # Referencias de datos
+        values = Reference(ws_graficas, 
+                        min_col=2,
+                        min_row=data_row,
+                        max_col=num_years + 1,
+                        max_row=data_row)
+
+        categories = Reference(ws_graficas,
+                            min_col=2,
+                            min_row=3,
+                            max_col=num_years + 1,
+                            max_row=3)
+
+        # Serie
+        series = Series(values, title="")
+        chart.series.append(series)
+        chart.set_categories(categories)
+
+        # ⭐️ Configurar eje Y
+        chart.y_axis.tickLblPos = "low"
+        chart.y_axis.majorGridlines = ChartLines()
+        chart.y_axis.minorGridlines = None
+        chart.y_axis.number_format = '0.00'
+
+        # ⭐️ Configurar eje X
+        chart.x_axis.tickLblPos = "low"
+        chart.x_axis.majorGridlines = None
+        chart.x_axis.minorGridlines = None
+        chart.x_axis.number_format = "@"  # Formato de texto
+
+        # ⭐️ Formato del eje Y según los datos
+        valores_ratio = []
+        for col in range(2, num_years + 2):
+            val = ws_graficas.cell(row=data_row, column=col).value
+            if isinstance(val, (int, float)):
+                valores_ratio.append(val)
+
+        if valores_ratio:
+            max_val = max(valores_ratio)
+            if abs(max_val) < 1:
+                chart.y_axis.number_format = '0.0000'
+            elif abs(max_val) < 100:
+                chart.y_axis.number_format = '0.00'
+            else:
+                chart.y_axis.number_format = '#,##0'
+
+            # Forzar rango del eje Y
+            min_val = min(valores_ratio)
+            chart.y_axis.scaling.min = min_val * 0.9 if min_val > 0 else min_val * 1.1
+            chart.y_axis.scaling.max = max_val * 1.1
+
+        # Posición del gráfico
+        row_pos = chart_row + (idx // charts_per_row) * chart_height
+        col_pos = 1 + (idx % charts_per_row) * chart_width
+        cell_pos = f"{get_column_letter(col_pos)}{row_pos}"
+        ws_graficas.add_chart(chart, cell_pos)
+
+        print(f"Gráfico {idx + 1}: {ratio_name} en celda {cell_pos}")
+        
     output_formatted = io.BytesIO()
     wb.save(output_formatted)
     output_formatted.seek(0)
