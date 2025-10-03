@@ -86,6 +86,7 @@ def buscar_cuenta_parcial(df, keywords):
 # ================= PROCESAR ARCHIVOS =================
 datos_balance = {}
 datos_resultados = {}
+datos_patimonio= {}
 datos_flujo_efectivo = {}
 
 progress_bar = st.progress(0)
@@ -103,8 +104,8 @@ for i, archivo in enumerate(archivos):
     actualizar_progreso(i, total_archivos)  
     time.sleep(1)  
 
-progress_bar.progress(1.0) 
 status_text.text("✅ ¡Procesamiento Completo! Ahora puedes ver los resultados.")
+progress_bar.progress(1.0) 
 
 for i, archivo in enumerate(archivos):
     status_text.text(f"📦 Procesando: {archivo.name}")
@@ -179,7 +180,41 @@ for i, archivo in enumerate(archivos):
                     if anio not in datos_resultados:
                         datos_resultados[anio] = {}
                     datos_resultados[anio][cuenta] = valor
-    
+
+
+    # Función para procesar la tabla de Estado de Cambios en el Patrimonio Neto
+    tabla_patimonio = soup.find('table', {'id': 'gvReporte2'})  # Asegúrate de que el id de la tabla sea correcto
+    if tabla_patimonio:
+        filas = [[td.get_text(strip=True) for td in tr.find_all(['td', 'th'])] for tr in tabla_patimonio.find_all('tr') if tr.find_all(['td', 'th'])]
+
+        if len(filas) > 1:
+            encabezados = filas[0]
+            columnas_anios = encabezados[2:]  # Obtenemos los años desde la cabecera
+            anios = [int(m.group(0)) if (m := re.search(r'\b(19|20)\d{2}\b', col)) else None for col in columnas_anios]
+            
+            for fila in filas[1:]:
+                if len(fila) < 3:
+                    continue
+                cuenta_raw = fila[0].strip()
+                if not cuenta_raw:
+                    continue
+                
+                for i_col, valor_str in enumerate(fila[2:]):
+                    anio = anios[i_col]
+                    if anio is None:
+                        continue
+                    valor = limpiar_valor(valor_str)
+                    cuenta = normalize_name(cuenta_raw)
+                    
+                    if anio not in datos_patimonio:
+                        datos_patimonio[anio] = {}
+                    
+                    if cuenta not in datos_patimonio[anio]:
+                        datos_patimonio[anio][cuenta] = valor
+                    elif datos_patimonio[anio][cuenta] == 0 and valor != 0:
+                        datos_patimonio[anio][cuenta] = valor
+
+
     # Flujo de Efectivo
     tabla_flujo = soup.find('table', {'id': 'gvReporte3'})
     if tabla_flujo:
@@ -215,12 +250,15 @@ progress_bar.empty()
 # ================= CREAR DATAFRAMES =================
 df_balance = pd.DataFrame.from_dict(datos_balance, orient='index').fillna(0.0).T if datos_balance else pd.DataFrame()
 df_resultados = pd.DataFrame.from_dict(datos_resultados, orient='index').fillna(0.0).T if datos_resultados else pd.DataFrame()
+df_patrimonio = pd.DataFrame.from_dict(datos_patimonio, orient='index').fillna(0.0).T if datos_patimonio else pd.DataFrame()
 df_flujo_efectivo = pd.DataFrame.from_dict(datos_flujo_efectivo, orient='index').fillna(0.0).T if datos_flujo_efectivo else pd.DataFrame()
 
 if not df_balance.empty:
     df_balance = df_balance.reindex(sorted(df_balance.columns), axis=1)
 if not df_resultados.empty:
     df_resultados = df_resultados.reindex(sorted(df_resultados.columns), axis=1)
+if not df_patrimonio.empty:
+    df_patrimonio = df_patrimonio.reindex(sorted(df_patrimonio.columns), axis=1)
 if not df_flujo_efectivo.empty:
     df_flujo_efectivo = df_flujo_efectivo.reindex(sorted(df_flujo_efectivo.columns), axis=1)
 
@@ -512,6 +550,13 @@ with tab1:
         st.dataframe(df_resultados, use_container_width=True)
     else:
         st.warning("No se encontró data del Estado de Resultados")
+
+    st.markdown("---")
+    st.subheader("💰 Estado de Patrimonio")
+    if not df_resultados.empty:
+        st.dataframe(df_resultados, use_container_width=True)
+    else:
+        st.warning("No se encontró data del Estado de patrimonio")
     
     st.markdown("---")
     st.subheader("💵 Estado de Flujo de Efectivo")
@@ -610,13 +655,20 @@ with tab4:
     
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
+
         if not df_balance.empty:
             df_balance.to_excel(writer, sheet_name='Balance', index_label='Cuenta')
         if not df_resultados.empty:
             df_resultados.to_excel(writer, sheet_name='Estado Resultados', index_label='Cuenta')
+        
+        if not df_resultados.empty:
+            df_resultados.to_excel(writer, sheet_name='Estado patrimonio', index_label='Cuenta')
+
         if not df_flujo_efectivo.empty:
             df_flujo_efectivo.to_excel(writer, sheet_name='Flujo Efectivo', index_label='Cuenta')
         
+
+
         if not df_vertical_balance.empty and not df_horizontal_balance.empty:
             df_vertical_balance.to_excel(writer, sheet_name='Analisis Balance', index_label='Cuenta', startrow=0)
             ws = writer.sheets['Analisis Balance']

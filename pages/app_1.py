@@ -17,6 +17,7 @@ import matplotlib.pyplot as plt
 from openpyxl.drawing.image import Image
 import os
 import tempfile
+import time
 
 st.set_page_config(page_title="Consolidador SMV - Finanzas Corporativas", layout="wide")
 
@@ -56,6 +57,24 @@ elif len(archivos) < 5:
 if not archivos:
     st.warning("👆 **Por favor, sube los archivos Excel del SMV para comenzar el análisis.**")
     st.stop()
+
+progress_bar = st.progress(0)
+status_text = st.empty()
+
+# Función para actualizar el progreso de manera dinámica
+def actualizar_progreso(i, total_archivos):
+    porcentaje = (i + 1) / total_archivos
+    progress_bar.progress(porcentaje)
+    status_text.text(f"🔄 Procesando el archivo {i + 1} de {total_archivos}...")
+
+total_archivos = len(archivos) 
+
+for i, archivo in enumerate(archivos):
+    actualizar_progreso(i, total_archivos)  
+    time.sleep(1)  
+
+status_text.text("✅ ¡Procesamiento Completo! Ahora puedes ver los resultados.")
+progress_bar.progress(1.0) 
 
 # ================= UTILIDADES =================
 def normalize_name(s):
