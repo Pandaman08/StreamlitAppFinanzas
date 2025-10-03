@@ -11,41 +11,29 @@ from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.chart import LineChart, Reference
 from openpyxl.formatting.rule import ColorScaleRule
+import time 
+import plotly.graph_objects as go
 
-st.set_page_config(
-    page_title="Consolidador Financiero SMV",  
-    page_icon="📈",                            
-    layout="wide",                            
-    initial_sidebar_state="expanded"           
-)
+
+st.set_page_config(page_title="Consolidador SMV - Finanzas Corporativas", layout="wide")
+
 # ================= HEADER =================
 st.title("📊 Consolidador de Estados Financieros - SMV")
 st.markdown("**Análisis Financiero Automatizado** | Sube archivos Excel del SMV y obtén análisis completo con gráficas.")
 
 # ================= SIDEBAR =================
 with st.sidebar:
-    st.header("⚙️ Configuración del Análisis")
-    
-    nombre_empresa = st.text_input(
-        "Nombre de la Empresa", 
-        value="EMPRESA ANALIZADA", 
-        help="Este nombre se mostrará en el reporte generado"
-    )
+    st.header("⚙️ Configuración")
+    nombre_empresa = st.text_input("Nombre de la Empresa", value="EMPRESA ANALIZADA", help="Aparecerá en el reporte")
     
     st.markdown("---")
-    
-    st.subheader("📋 Cómo usar la herramienta")
-    st.info(
-        """
-        1️⃣ Descarga los archivos Excel (.xls) desde la SMV.  
-        2️⃣ Súbelos aquí (pueden ser de cualquier año).  
-        3️⃣ Espera mientras se procesan los datos.  
-        4️⃣ Visualiza los resultados y descarga tu consolidado.  
-        """
-    )
-    
-    st.markdown("---")
-    st.write("💡 Tip: Asegúrate de que los archivos Excel tengan el formato estándar del SMV para un análisis correcto.")
+    st.markdown("### 📋 Instrucciones")
+    st.info("""
+    1. Descarga archivos Excel (.xls) del SMV
+    2. Súbelos (pueden ser de cualquier año)
+    3. Espera el procesamiento
+    4. Revisa resultados y descarga el consolidado
+    """)
 
 # ================= UPLOAD FILES =================
 archivos = st.file_uploader(
@@ -59,8 +47,6 @@ if not archivos:
     st.stop()
 
 # ================= UTILIDADES =================
-
-# Normalizar nombres de cuentas y empresas para comparaciones consistentes.
 def normalize_name(s):
     if not isinstance(s, str):
         return s
@@ -69,7 +55,6 @@ def normalize_name(s):
     s2 = re.sub(r'\s*\(\d+\)\s*$', '', s2)
     return s2
 
-#Convertir datos de Excel a números válidos para cálculos financieros.
 def limpiar_valor(valor):
     if valor is None:
         return 0.0
@@ -85,7 +70,6 @@ def limpiar_valor(valor):
     except:
         return 0.0
 
-# Buscar cuentas que contengan todas las palabras clave (búsqueda estricta).
 def buscar_cuenta_flexible(df, keywords_list):
     for keywords in keywords_list:
         for idx in df.index:
@@ -93,30 +77,38 @@ def buscar_cuenta_flexible(df, keywords_list):
                 return idx
     return None
 
-# Buscar cuentas que contengan cualquiera de las palabras clave (búsqueda amplia).
 def buscar_cuenta_parcial(df, keywords):
     for idx in df.index:
         if any(kw.upper() in idx.upper() for kw in keywords):
             return idx
     return None
 
-
 # ================= PROCESAR ARCHIVOS =================
-
-#Se crean diccionarios donde se guardaran todos los estados financieros 
 datos_balance = {}
 datos_resultados = {}
 datos_flujo_efectivo = {}
 
-#Barra de progreso y mensaje de estado
 progress_bar = st.progress(0)
 status_text = st.empty()
 
-#Recorre cada archivo que el usuario subio 
+# Función para actualizar el progreso de manera dinámica
+def actualizar_progreso(i, total_archivos):
+    porcentaje = (i + 1) / total_archivos
+    progress_bar.progress(porcentaje)
+    status_text.text(f"🔄 Procesando el archivo {i + 1} de {total_archivos}...")
+
+total_archivos = len(archivos) 
+
+for i, archivo in enumerate(archivos):
+    actualizar_progreso(i, total_archivos)  
+    time.sleep(1)  
+
+progress_bar.progress(1.0) 
+status_text.text("✅ ¡Procesamiento Completo! Ahora puedes ver los resultados.")
+
 for i, archivo in enumerate(archivos):
     status_text.text(f"📦 Procesando: {archivo.name}")
     
-#Leer el contenido del archivo
     contenido = None
     for cod in ['latin-1', 'cp1252', 'utf-8']:
         try:
@@ -125,16 +117,14 @@ for i, archivo in enumerate(archivos):
             break
         except:
             continue
-#Verificación de lectura
+    
     if not contenido:
         st.error(f"❌ No se pudo leer {archivo.name}")
         continue
     
     soup = BeautifulSoup(contenido, 'html.parser')
     
-
-   
-    # =================ESTADO DE SITUACION FINANCIERA  =================
+    # Balance
     tabla_balance = soup.find('table', {'id': 'gvReporte'})
     if tabla_balance:
         filas = [[td.get_text(strip=True) for td in tr.find_all(['td', 'th'])] for tr in tabla_balance.find_all('tr') if tr.find_all(['td', 'th'])]
@@ -165,15 +155,10 @@ for i, archivo in enumerate(archivos):
                     elif datos_balance[anio][cuenta] == 0 and valor != 0:
                         datos_balance[anio][cuenta] = valor
     
-
-    # ================= ESTADO DE RESULTADOS =================
-    # Busca la tabla del Estado de Resultados en el HTML (normalmente tiene id="gvReporte1")
+    # Estado de Resultados
     tabla_resultados = soup.find('table', {'id': 'gvReporte1'})
-
     if tabla_resultados:
-         # Extrae todas las filas de la tabla y el texto de cada celda (td o th)
         filas = [[td.get_text(strip=True) for td in tr.find_all(['td', 'th'])] for tr in tabla_resultados.find_all('tr') if tr.find_all(['td', 'th'])]
-
         if len(filas) > 1:
             encabezados = filas[0]
             columnas_anios = encabezados[2:]
@@ -195,8 +180,6 @@ for i, archivo in enumerate(archivos):
                         datos_resultados[anio] = {}
                     datos_resultados[anio][cuenta] = valor
     
-
-
     # Flujo de Efectivo
     tabla_flujo = soup.find('table', {'id': 'gvReporte3'})
     if tabla_flujo:
@@ -228,6 +211,7 @@ for i, archivo in enumerate(archivos):
 status_text.empty()
 progress_bar.empty()
 
+
 # ================= CREAR DATAFRAMES =================
 df_balance = pd.DataFrame.from_dict(datos_balance, orient='index').fillna(0.0).T if datos_balance else pd.DataFrame()
 df_resultados = pd.DataFrame.from_dict(datos_resultados, orient='index').fillna(0.0).T if datos_resultados else pd.DataFrame()
@@ -240,79 +224,81 @@ if not df_resultados.empty:
 if not df_flujo_efectivo.empty:
     df_flujo_efectivo = df_flujo_efectivo.reindex(sorted(df_flujo_efectivo.columns), axis=1)
 
-# ================= FILTRAR SOLO EL ÚLTIMO AÑO =================
-anios_disponibles = set(df_balance.columns) | set(df_resultados.columns) | set(df_flujo_efectivo.columns)
-anio_maximo = max(anios_disponibles) if anios_disponibles else None
-
-def filtrar_ultimo_anio(df, anio_maximo):
-    if df.empty or anio_maximo is None:
-        return df
-    if anio_maximo in df.columns:
-        return df[[anio_maximo]]
-    return df
-
-df_balance = filtrar_ultimo_anio(df_balance, anio_maximo)
-df_resultados = filtrar_ultimo_anio(df_resultados, anio_maximo)
-df_flujo_efectivo = filtrar_ultimo_anio(df_flujo_efectivo, anio_maximo)
 
 
-filas_balance = [
-    "ACTIVOS",
-    "ACTIVOS CORRIENTES",
-    "TOTAL ACTIVOS CORRIENTES",
-    "ACTIVOS NO CORRIENTES",
-    "TOTAL ACTIVOS NO CORRIENTES",
-    "TOTAL DE ACTIVOS",
-    "PASIVOS Y PATRIMONIO",
-    "PASIVOS CORRIENTES",
-    "TOTAL PASIVOS CORRIENTES",
-    "PASIVOS NO CORRIENTES",
-    "TOTAL PASIVOS NO CORRIENTES",
-    "TOTAL PASIVOS",
-    "PATRIMONIO",
-    "TOTAL PATRIMONIO",
-    "TOTAL PASIVO Y PATRIMONIO"
-]
+# Verificamos que el DataFrame de balance no esté vacío
+if not df_balance.empty:
+    st.subheader("📊 Gráfico del Balance General (Activos, Pasivos y Patrimonio)")
+
+    # Años disponibles en el DataFrame
+    anios = sorted(df_balance.columns)
+
+    # Crear la figura de Plotly
+    fig_balance = go.Figure()
+
+    # Añadir las barras de activos, pasivos y patrimonio
+    for cuenta in ["TOTAL DE ACTIVOS", "TOTAL PASIVOS", "TOTAL PATRIMONIO"]:
+        if cuenta in df_balance.index:
+            fig_balance.add_trace(go.Bar(
+                x=anios,
+                y=df_balance.loc[cuenta, anios],
+                name=cuenta,
+                marker=dict(color='royalblue' if cuenta == "TOTAL DE ACTIVOS" 
+                            else 'tomato' if cuenta == "TOTAL PASIVOS" 
+                            else 'forestgreen'),
+                text=df_balance.loc[cuenta, anios],
+                hoverinfo='text'
+            ))
+
+    # Configurar layout
+    fig_balance.update_layout(
+        title="Total Activos vs Pasivos y Patrimonio",
+        xaxis_title="Año",
+        yaxis_title="Monto (en soles)",
+        barmode='group',
+        template="plotly_dark",
+        showlegend=True
+    )
+
+    # Mostrar gráfico en Streamlit
+    st.plotly_chart(fig_balance)
 
 
-# Estado de Resultados
-filas_resultados = [
-    "INGRESOS DE ACTIVIDADES ORDINARIAS",
-    "GANANCIA (PERDIDA) BRUTA",
-    "GANANCIA (PERDIDA) OPERATIVA",
-    "GANANCIA (PERDIDA) ANTES DE IMPUESTOS",
-    "GANANCIA (PERDIDA) NETA DEL EJERCICIO",
-    "GANANCIA (PERDIDA) POR ACCION",
-    "GANANCIA (PERDIDA) BASICA POR ACCION",
-    "GANANCIA (PERDIDA) DILUIDA POR ACCION",
-]
+# Verificamos que el DataFrame de resultados no esté vacío
+if not df_resultados.empty:
+    st.subheader("📉 Gráfico del Estado de Resultados (Ganancia Bruta y Neta)")
 
-# Estado de Flujo de Efectivo
-filas_flujo = [
-    "FLUJO DE EFECTIVO DE ACTIVIDADES DE OPERACIÓN",
-    "CLASES DE COBROS EN EFECTIVO POR ACTIVIDADES DE OPERACIÓN",
-    "CLASES DE PAGOS EN EFECTIVO POR ACTIVIDADES DE OPERACIÓN",
-    "FLUJOS DE EFECTIVO Y EQUIVALENTE AL EFECTIVO PROCEDENTE DE (UTILIZADOS EN) ACTIVIDADES DE OPERACIÓN",
+    # Años disponibles en el DataFrame
+    anios = sorted(df_resultados.columns)
 
-    "FLUJO DE EFECTIVO DE ACTIVIDADES DE INVERSIÓN",
-    "CLASES DE COBROS EN EFECTIVO POR ACTIVIDADES DE INVERSIÓN",
-    "CLASES DE PAGOS EN EFECTIVO POR ACTIVIDADES DE INVERSIÓN",
-    "FLUJOS DE EFECTIVO Y EQUIVALENTE AL EFECTIVO PROCEDENTE DE (UTILIZADOS EN) ACTIVIDADES DE INVERSIÓN",
-    
-    "FLUJO DE EFECTIVO DE ACTIVIDADES DE FINANCIACIÓN",
-    "CLASES DE COBROS EN EFECTIVO POR ACTIVIDADES DE FINANCIACIÓN",
-    "CLASES DE PAGOS EN EFECTIVO POR ACTIVIDADES DE FINANCIACIÓN",
-    "FLUJOS DE EFECTIVO Y EQUIVALENTE AL EFECTIVO PROCEDENTE DE (UTILIZADOS EN) ACTIVIDADES DE FINANCIACIÓN",
-   
-    "EFECTIVO Y EQUIVALENTE AL EFECTIVO AL FINALIZAR EL EJERCICIO"
-]   
+    # Crear la figura de Plotly
+    fig_resultados = go.Figure()
 
-def resaltar_filas(s, lista_resaltar):
-    if s.name in lista_resaltar:
-        return ['background-color: #b3e5fc; font-weight: bold; color: black'] * len(s)
-    return [''] * len(s)
+    # Añadir las barras de ganancia bruta y ganancia neta
+    for cuenta in ["GANANCIA (PERDIDA) BRUTA", "GANANCIA (PERDIDA) NETA DEL EJERCICIO"]:
+        if cuenta in df_resultados.index:
+            fig_resultados.add_trace(go.Bar(
+                x=anios,
+                y=df_resultados.loc[cuenta, anios],
+                name=cuenta,
+                marker=dict(color='gold' if cuenta == "GANANCIA (PERDIDA) BRUTA" 
+                            else 'forestgreen'),
+                text=df_resultados.loc[cuenta, anios],
+                hoverinfo='text'
+            ))
 
+    # Configurar layout
+    fig_resultados.update_layout(
+        title="Ganancia Bruta vs Ganancia Neta",
+        xaxis_title="Año",
+        yaxis_title="Monto (en soles)",
+        barmode='group',
+        template="plotly_dark",
+        showlegend=True
+    )
 
+    # Mostrar gráfico en Streamlit
+    st.plotly_chart(fig_resultados)
 
 # ================= ANÁLISIS V/H =================
 df_vertical_balance = pd.DataFrame()
@@ -516,28 +502,23 @@ tab1, tab2, tab3, tab4 = st.tabs(["📊 Estados Financieros", "📈 Análisis V/
 with tab1:
     st.subheader("💼 Estado de Situación Financiera")
     if not df_balance.empty:
-        st.dataframe(df_balance.style.apply(lambda r: resaltar_filas(r, filas_balance), axis=1), use_container_width=True)
+        st.dataframe(df_balance, use_container_width=True)
     else:
         st.warning("No se encontró data del Balance")
     
-
     st.markdown("---")
     st.subheader("💰 Estado de Resultados")
     if not df_resultados.empty:
-          st.dataframe(df_resultados.style.apply(lambda r: resaltar_filas(r, filas_resultados), axis=1), use_container_width=True)
+        st.dataframe(df_resultados, use_container_width=True)
     else:
         st.warning("No se encontró data del Estado de Resultados")
     
-
-
     st.markdown("---")
     st.subheader("💵 Estado de Flujo de Efectivo")
     if not df_flujo_efectivo.empty:
-        st.dataframe(df_flujo_efectivo.style.apply(lambda r: resaltar_filas(r, filas_flujo), axis=1), use_container_width=True)
+        st.dataframe(df_flujo_efectivo, use_container_width=True)
     else:
         st.warning("No se encontró data del Flujo de Efectivo")
-
-
 
 with tab2:
     st.subheader("📊 Análisis Vertical y Horizontal - Estado de Situación Financiera")
@@ -764,15 +745,14 @@ with tab4:
             chart.height = 7
             chart.width = 14
             
-            cats = Reference(ws_ratios, min_col=2, min_row=1, max_col=num_years+1, max_row=1)
             ratio_row_in_ratios = ratio_names.index(ratio) + 2
             data = Reference(ws_ratios, min_col=2, min_row=ratio_row_in_ratios, max_col=num_years+1, max_row=ratio_row_in_ratios)
-            
+            cats = Reference(ws_ratios, min_col=2, min_row=1, max_col=num_years+1, max_row=1)
             
             chart.add_data(data, titles_from_data=False)
             chart.set_categories(cats)
             
-            ws_graficas.add_chart(chart, f'B{current_row + 3}')
+            ws_graficas.add_chart(chart, f'A{current_row + 3}')
             current_row += 18
     
     output_formatted = io.BytesIO()
