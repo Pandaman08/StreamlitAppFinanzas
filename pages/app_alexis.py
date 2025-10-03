@@ -262,7 +262,21 @@ if not df_patrimonio.empty:
 if not df_flujo_efectivo.empty:
     df_flujo_efectivo = df_flujo_efectivo.reindex(sorted(df_flujo_efectivo.columns), axis=1)
 
+# ⭐️ ELIMINAR EL PRIMER AÑO DE TODAS LAS TABLAS (LOGICA DE TU COMPAÑERO)
+if not df_balance.empty:
+    df_balance = df_balance.reindex(sorted(df_balance.columns), axis=1)
+    if len(df_balance.columns) > 1:
+        df_balance = df_balance.iloc[:, 1:]  # ← Elimina la primera columna (primer año)
 
+if not df_resultados.empty:
+    df_resultados = df_resultados.reindex(sorted(df_resultados.columns), axis=1)
+    if len(df_resultados.columns) > 1:
+        df_resultados = df_resultados.iloc[:, 1:]  # ← Elimina la primera columna (primer año)
+
+if not df_flujo_efectivo.empty:
+    df_flujo_efectivo = df_flujo_efectivo.reindex(sorted(df_flujo_efectivo.columns), axis=1)
+    if len(df_flujo_efectivo.columns) > 1:
+        df_flujo_efectivo = df_flujo_efectivo.iloc[:, 1:]  # ← Elimina la primera columna (primer año)
 
 # Verificamos que el DataFrame de balance no esté vacío
 if not df_balance.empty:
