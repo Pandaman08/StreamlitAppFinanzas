@@ -18,7 +18,7 @@ apply_custom_styles()
 # ================= HEADER CON LOGO =================
 col_logo, col_title = st.columns([1, 5])
 with col_logo:
-    st.image("assets/logo.jpeg", width=80)
+    st.image("assets/estado-financiero.png", width=100)
 with col_title:
     st.title("📊 Consolidador de Estados Financieros - SMV")
     st.markdown("**Análisis Financiero Automatizado** | Sube archivos Excel del SMV (2002-2024) y obtén análisis completo con gráficas.")
