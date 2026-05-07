@@ -34,7 +34,7 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("### 📋 Instrucciones")
     st.info("""
-    1. Descarga archivos Excel (.xls) del SMV
+    1. Descarga archivos Excel (.xls o .xlsx) del SMV
     2. Súbelos (pueden ser de cualquier año: 2002-2024)
     3. Espera el procesamiento
     4. Revisa resultados y descarga el consolidado
@@ -42,8 +42,8 @@ with st.sidebar:
 
 # ================= UPLOAD FILES =================
 archivos = st.file_uploader(
-    "📁 Selecciona archivos Excel (.xls) del SMV",
-    type=["xls"],
+    "📁 Selecciona archivos Excel (.xls, .xlsx) del SMV",
+    type=["xls", "xlsx", "xlsm"],
     accept_multiple_files=True
 )
 if not archivos:

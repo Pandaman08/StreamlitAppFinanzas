@@ -1,6 +1,12 @@
 import pandas as pd
 from utils import buscar_cuenta_flexible, buscar_cuenta_parcial
 
+
+def _variacion_porcentual(df, anio_anterior, anio_actual):
+    """Calcula variación porcentual anual evitando división por cero."""
+    base = df[anio_anterior].replace(0, pd.NA)
+    return ((df[anio_actual] - df[anio_anterior]) / base) * 100
+
 def calcular_analisis_vh(df_balance, df_resultados):
     """Calcula análisis vertical y horizontal para balance y resultados."""
     df_vertical_balance = pd.DataFrame()
@@ -25,9 +31,9 @@ def calcular_analisis_vh(df_balance, df_resultados):
             anio_actual = columnas[i + 1]
             anio_anterior = columnas[i]
             col_nombre = f"{anio_anterior}-{anio_actual}"
-            with pd.option_context('mode.use_inf_as_na', True):
-                df_horizontal_balance[col_nombre] = ((df_horizontal_balance[anio_actual] - df_horizontal_balance[anio_anterior]) / 
-                                                     df_horizontal_balance[anio_anterior] * 100)
+            df_horizontal_balance[col_nombre] = _variacion_porcentual(
+                df_horizontal_balance, anio_anterior, anio_actual
+            )
             nuevas_columnas.append(col_nombre)
         df_horizontal_balance = df_horizontal_balance[nuevas_columnas].round(2)
         df_horizontal_balance = df_horizontal_balance.replace([float('inf'), float('-inf')], pd.NA)
@@ -53,9 +59,9 @@ def calcular_analisis_vh(df_balance, df_resultados):
             anio_actual = columnas[i + 1]
             anio_anterior = columnas[i]
             col_nombre = f"{anio_anterior}-{anio_actual}"
-            with pd.option_context('mode.use_inf_as_na', True):
-                df_horizontal_resultados[col_nombre] = ((df_horizontal_resultados[anio_actual] - df_horizontal_resultados[anio_anterior]) / 
-                                                        df_horizontal_resultados[anio_anterior] * 100)
+            df_horizontal_resultados[col_nombre] = _variacion_porcentual(
+                df_horizontal_resultados, anio_anterior, anio_actual
+            )
             nuevas_columnas.append(col_nombre)
         df_horizontal_resultados = df_horizontal_resultados[nuevas_columnas].round(2)
         df_horizontal_resultados = df_horizontal_resultados.replace([float('inf'), float('-inf')], pd.NA)
@@ -221,7 +227,7 @@ def calcular_ratios(df_balance, df_resultados):
         df_ratios = pd.DataFrame.from_dict(ratios_data, orient='index')
         def round_if_num(x):
             return round(x, 4) if isinstance(x, (int, float)) else x
-        df_ratios = df_ratios.applymap(round_if_num).T
+        df_ratios = df_ratios.map(round_if_num).T
     else:
         df_ratios = pd.DataFrame()
 

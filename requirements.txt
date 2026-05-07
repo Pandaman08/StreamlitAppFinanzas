@@ -4,5 +4,6 @@ numpy
 matplotlib
 beautifulsoup4
 openpyxl
+xlrd
 plotly
 openai
